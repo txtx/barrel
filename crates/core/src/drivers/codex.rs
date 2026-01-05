@@ -1,6 +1,15 @@
-//! Codex agent driver
+//! Codex agent driver.
 //!
-//! Merges all agent files into a single `.codex/AGENTS.md` file.
+//! Unlike Claude Code (which uses symlinks), Codex expects a single merged file
+//! containing all agent instructions. This driver:
+//!
+//! 1. Creates `.codex/AGENTS.md` in the workspace
+//! 2. Concatenates all agent files with headers and separators
+//! 3. Strips YAML frontmatter from each agent before merging
+//! 4. Marks the file as auto-generated for cleanup detection
+//!
+//! The merged file is configured as a project doc fallback via `-c` flag when
+//! launching Codex, so it's automatically discovered.
 
 use std::path::{Path, PathBuf};
 
@@ -73,7 +82,11 @@ impl AgentDriver for CodexDriver {
     }
 }
 
-/// Derive agent name from file path
+/// Derive agent name from file path.
+///
+/// Handles two naming conventions:
+/// - `<name>/AGENT.md` → uses the directory name
+/// - `<name>.md` → uses the file stem
 fn derive_agent_name(path: &Path) -> String {
     if path.file_name().map(|n| n == "AGENT.md").unwrap_or(false) {
         path.parent()
@@ -87,7 +100,11 @@ fn derive_agent_name(path: &Path) -> String {
     }
 }
 
-/// Strip YAML frontmatter from markdown content
+/// Strip YAML frontmatter from markdown content.
+///
+/// Agent files may have YAML frontmatter (`---\n...\n---`) containing metadata
+/// like name and description. This is stripped before merging since the merged
+/// file has its own structure.
 fn strip_frontmatter(content: &str) -> &str {
     content
         .strip_prefix("---")

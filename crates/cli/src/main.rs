@@ -1,7 +1,26 @@
-//! Barrel CLI - Tmux workspace launcher
+//! Barrel CLI - AI-assisted development workspace manager.
 //!
-//! This is the command-line interface for barrel. All core functionality
-//! is provided by the `barrel-core` crate.
+//! Barrel provides portable agents across LLMs (Claude Code, Codex, OpenCode) and
+//! reproducible terminal workspaces via tmux. Write agents once and use them with
+//! any supported AI assistant.
+//!
+//! # Architecture
+//!
+//! The CLI handles:
+//! - **Manifest resolution**: Walks up the directory tree to find `barrel.yaml`
+//! - **Profile selection**: Chooses between `tmux`, `tmux_cc` (iTerm2), or `shell` modes
+//! - **Agent installation**: Delegates to drivers in `barrel-core` for each AI tool
+//! - **Session management**: Creates, attaches to, and kills tmux sessions
+//!
+//! # Workflow
+//!
+//! 1. User runs `barrel` in a project directory
+//! 2. CLI finds `barrel.yaml` by walking up the directory tree
+//! 3. Profile type determines launch mode (tmux, iTerm2, or single shell)
+//! 4. Agents are installed via drivers (symlinks for Claude/OpenCode, merged for Codex)
+//! 5. Tmux session is created with configured panes, or shell is exec'd directly
+//!
+//! Core functionality (config parsing, drivers, tmux commands) is in `barrel-core`.
 
 mod cli;
 
@@ -35,6 +54,18 @@ const CONFIG_DIR: &str = ".config";
 // Main Entry Point
 // =============================================================================
 
+/// Entry point for the barrel CLI.
+///
+/// Parses command-line arguments and dispatches to the appropriate handler:
+///
+/// - **Subcommands** (`init`, `bootstrap`, `agent`): Handled first
+/// - **Flags** (`-n`, `-k`): Create agent or kill workspace
+/// - **Shell name**: Launch specific shell from manifest (e.g., `barrel claude`)
+/// - **No args**: Launch full workspace from `barrel.yaml` or show help
+///
+/// The manifest path is resolved by walking up the directory tree from the
+/// current directory until `barrel.yaml` is found, or uses the path specified
+/// with `-m/--manifest-path`.
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let workspaces_dir = workspaces_dir();
@@ -228,12 +259,24 @@ description: Project documentation for AI assistants
     Ok(())
 }
 
-/// Scan for existing agents and consolidate them using AI
+/// Scan for existing agents and consolidate them using AI.
+///
+/// This experimental command discovers agent files across the filesystem by:
+/// 1. Prompting for a directory to scan
+/// 2. Walking the directory tree (ignoring .gitignore) looking for known agent patterns
+/// 3. Copying found files to a staging directory (`~/.config/barrel/agents/.bootstrap-staging/`)
+/// 4. Launching an AI assistant to consolidate and organize the agents
+///
+/// The AI is given instructions to merge duplicates, create proper directory structures
+/// (`<name>/AGENT.md`), and clean up the staging directory when done.
+///
+/// For more controlled imports, prefer `barrel agent import`.
 fn bootstrap_agents() -> Result<()> {
+    use std::os::unix::process::CommandExt;
+
     use barrel_core::all_agent_patterns;
     use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
     use ignore::WalkBuilder;
-    use std::os::unix::process::CommandExt;
 
     let theme = ColorfulTheme::default();
     let current_dir = std::env::current_dir()?;
@@ -302,8 +345,7 @@ fn bootstrap_agents() -> Result<()> {
                 if parts.len() == 2 {
                     let prefix = parts[0];
                     let suffix = parts[1];
-                    path_str.contains(prefix.trim_start_matches('.'))
-                        && path_str.ends_with(suffix)
+                    path_str.contains(prefix.trim_start_matches('.')) && path_str.ends_with(suffix)
                 } else {
                     false
                 }
@@ -438,9 +480,7 @@ Please consolidate and organize them into clean agents:
     // Change to the global agents directory and launch AI
     std::env::set_current_dir(&global_agents_dir)?;
 
-    let err = std::process::Command::new(ai_command)
-        .arg(&prompt)
-        .exec();
+    let err = std::process::Command::new(ai_command).arg(&prompt).exec();
 
     Err(err.into())
 }
@@ -484,6 +524,23 @@ fn do_kill_workspace(workspaces_dir: &Path, name: &str, keep_agents: bool) -> Re
     Ok(())
 }
 
+/// Launch a workspace from a manifest file.
+///
+/// This is the main launch path when running `barrel` with a `barrel.yaml` present.
+///
+/// # Session handling
+///
+/// If a tmux session already exists with the workspace name:
+/// - Verifies the session belongs to the same manifest (via `BARREL_MANIFEST` env var)
+/// - If it's the same workspace, attaches to the existing session
+/// - If it's a different workspace, errors with guidance to rename the workspace
+///
+/// # Profile types
+///
+/// The profile type (from `barrel.yaml` or `-p` flag) determines the launch mode:
+/// - `shell`: No tmux, exec's the first shell directly (single pane)
+/// - `tmux_cc`: iTerm2 integration via `tmux -CC`
+/// - `tmux`: Standard tmux with pane layout
 fn launch_from_manifest(config_path: &Path, profile: Option<&str>) -> Result<()> {
     if !config_path.exists() {
         eprintln!(
@@ -516,8 +573,16 @@ fn launch_from_manifest(config_path: &Path, profile: Option<&str>) -> Result<()>
                     "✘".red(),
                     session_name
                 );
-                eprintln!("  {} {}", "existing:".dimmed(), display_path(&existing_path));
-                eprintln!("  {} {}", "current: ".dimmed(), display_path(&current_manifest));
+                eprintln!(
+                    "  {} {}",
+                    "existing:".dimmed(),
+                    display_path(&existing_path)
+                );
+                eprintln!(
+                    "  {} {}",
+                    "current: ".dimmed(),
+                    display_path(&current_manifest)
+                );
                 eprintln!();
                 eprintln!(
                     "{}",
@@ -549,7 +614,15 @@ fn launch_from_manifest(config_path: &Path, profile: Option<&str>) -> Result<()>
     }
 }
 
-/// Launch in shell mode (no tmux, just run the first shell)
+/// Launch in shell mode (no tmux, just run the first shell).
+///
+/// Used when the profile type is `shell`. This mode:
+/// 1. Resolves the first pane from the profile
+/// 2. Installs agents for the appropriate driver (Claude, Codex, or OpenCode)
+/// 3. Creates CLAUDE.md symlink if using Claude
+/// 4. Builds the command and exec's it (replacing the barrel process)
+///
+/// This is useful for single-tool workflows or when tmux isn't desired.
 fn launch_shell_mode(config: &barrel_core::WorkspaceConfig, profile: Option<&str>) -> Result<()> {
     use std::os::unix::process::CommandExt;
 
@@ -680,7 +753,16 @@ fn launch_shell_mode(config: &barrel_core::WorkspaceConfig, profile: Option<&str
     }
 }
 
-/// Launch a specific shell by name from the manifest
+/// Launch a specific shell by name from the manifest.
+///
+/// Used when running `barrel <shell_name>` (e.g., `barrel claude`). This:
+/// 1. Loads the manifest and finds the shell config matching the name
+/// 2. Installs agents for the shell's driver type
+/// 3. Builds and runs the command in the current terminal
+/// 4. Cleans up agent symlinks when the shell exits
+///
+/// Unlike `launch_shell_mode`, this runs the command in a subprocess (not exec)
+/// so cleanup can happen after the shell exits.
 fn launch_shell_by_name(manifest_path: &Path, shell_name: &str) -> Result<()> {
     let config = load_config(manifest_path)?;
     let index = config.load_index();
@@ -830,7 +912,13 @@ fn launch_shell_by_name(manifest_path: &Path, shell_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Launch in tmux control mode (-CC) for iTerm2 integration
+/// Launch in tmux control mode (-CC) for iTerm2 integration.
+///
+/// iTerm2 supports tmux control mode which allows it to manage tmux panes
+/// as native iTerm2 tabs/splits. This provides a more integrated experience
+/// on macOS with features like native scrollback and mouse support.
+///
+/// The session is created normally, then attached with `tmux -CC attach-session`.
 fn launch_tmux_cc_mode(
     config_path: &Path,
     config: &barrel_core::WorkspaceConfig,
@@ -868,7 +956,16 @@ fn launch_tmux_cc_mode(
     Ok(())
 }
 
-/// Launch in standard tmux mode
+/// Launch in standard tmux mode.
+///
+/// Creates a tmux session with the configured pane layout. If a session
+/// with the workspace name already exists, attaches to it instead.
+///
+/// The session includes:
+/// - Mouse support and clipboard integration
+/// - Pane border titles showing shell names
+/// - Barrel-styled status bar with version info
+/// - Automatic agent installation for each AI pane
 fn launch_tmux_mode(config: &barrel_core::WorkspaceConfig, profile: Option<&str>) -> Result<()> {
     let session_name = config
         .manifest_path
@@ -1086,9 +1183,18 @@ fn global_agents_dir() -> Result<PathBuf> {
         .join(AGENTS_DIR))
 }
 
-/// Agent path: <base>/<name>/AGENT.md
+/// Represents an agent's location in the filesystem.
+///
+/// Agents follow the convention `<base>/<name>/AGENT.md` where:
+/// - Local agents: `./agents/<name>/AGENT.md`
+/// - Global agents: `~/.config/barrel/agents/<name>/AGENT.md`
+///
+/// This struct provides methods for checking existence, getting file paths,
+/// and formatting display strings for user output.
 struct AgentPath {
+    /// Directory containing the AGENT.md file
     dir: PathBuf,
+    /// Whether this is a global agent (affects display formatting)
     is_global: bool,
 }
 
@@ -1148,16 +1254,30 @@ fn global_agent_dirs() -> Vec<PathBuf> {
         .collect()
 }
 
-/// Represents a discovered agent
+/// Metadata for a discovered agent, used for listing.
+///
+/// Contains the agent's name, a description extracted from the file content,
+/// and location information for display purposes.
 struct AgentInfo {
+    /// Agent name (directory name or file stem)
     name: String,
+    /// First non-empty, non-heading line from the agent file (truncated to 60 chars)
     description: String,
+    /// Full path to the agent file
     #[allow(dead_code)]
     path: PathBuf,
+    /// Location label for display (workspace name or "global")
     location: String,
 }
 
-/// Find all agents in a directory
+/// Find all agents in a directory.
+///
+/// Discovers agents in two formats:
+/// - Directory format: `<name>/AGENT.md`
+/// - File format: `<name>.md` (excluding `index.md`)
+///
+/// For each agent, extracts a description from the file content by finding
+/// the first non-empty line that isn't a heading (or falls back to the first heading).
 fn find_agents_in_dir(dir: &Path, location: &str) -> Vec<AgentInfo> {
     let mut agents = Vec::new();
 
@@ -1517,12 +1637,7 @@ fn import_agent(path: &str) -> Result<()> {
             }
 
             // Import .md files
-            if entry_path.is_file()
-                && entry_path
-                    .extension()
-                    .map(|e| e == "md")
-                    .unwrap_or(false)
-            {
+            if entry_path.is_file() && entry_path.extension().map(|e| e == "md").unwrap_or(false) {
                 import_single_agent(&entry_path)?;
                 count += 1;
             }

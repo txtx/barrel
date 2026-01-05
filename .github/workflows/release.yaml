@@ -6,6 +6,10 @@ on:
       - main
   workflow_dispatch:
 
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: txtx-public
+
 concurrency:
   group: ${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}
   cancel-in-progress: true
@@ -151,3 +155,47 @@ jobs:
           tag: ${{ needs.get_release_info.outputs.tag }}
           commit: ${{ github.sha }}
           generateReleaseNotes: true
+
+  upload_s3:
+    name: Upload to S3
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/heads/main') && needs.get_release_info.outputs.tag != ''
+    needs:
+      - build
+      - get_release_info
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload to S3
+        run: |
+          TAG=${{ needs.get_release_info.outputs.tag }}
+          echo "Uploading artifacts to S3 for release $TAG"
+
+          for dir in ./artifacts/*/; do
+            for file in "$dir"*.tar.gz; do
+              if [ -f "$file" ]; then
+                BASENAME=$(basename "$file")
+                echo "→ Uploading $BASENAME ..."
+                aws s3 cp "$file" "s3://${{ env.S3_BUCKET }}/releases/$BASENAME" \
+                  --acl public-read \
+                  --cache-control "public, max-age=31536000"
+              fi
+            done
+          done
+
+      - name: Print public URLs
+        run: |
+          echo "✅ Uploaded artifacts are available at:"
+          echo "  - http://${{ env.S3_BUCKET }}.s3.amazonaws.com/releases/barrel-linux-x64.tar.gz"
+          echo "  - http://${{ env.S3_BUCKET }}.s3.amazonaws.com/releases/barrel-darwin-x64.tar.gz"
+          echo "  - http://${{ env.S3_BUCKET }}.s3.amazonaws.com/releases/barrel-darwin-arm64.tar.gz"

@@ -1,6 +1,12 @@
-//! OpenCode agent driver
+//! OpenCode agent driver.
 //!
-//! Installs agents to `.opencode/agent/` directory as symlinks.
+//! OpenCode uses a similar symlink strategy to Claude Code. Agents are installed
+//! as symlinks in `.opencode/agent/` directory within the workspace.
+//!
+//! This driver:
+//! 1. Creates `.opencode/agent/` if it doesn't exist
+//! 2. Symlinks each agent file as `<name>.md`
+//! 3. On cleanup, removes only symlinks (preserving any manually created files)
 
 use std::path::{Path, PathBuf};
 
@@ -83,7 +89,11 @@ impl AgentDriver for OpenCodeDriver {
     }
 }
 
-/// Derive agent name from file path
+/// Derive agent name from file path.
+///
+/// Handles two naming conventions:
+/// - `<name>/AGENT.md` → uses the directory name
+/// - `<name>.md` → uses the file stem
 fn derive_agent_name(path: &Path) -> String {
     if path.file_name().map(|n| n == "AGENT.md").unwrap_or(false) {
         path.parent()

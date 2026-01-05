@@ -1,6 +1,24 @@
-//! Tmux workspace session management
+//! Tmux workspace session management.
 //!
 //! This module provides high-level workspace creation using tmux sessions.
+//! It handles the complex layout algorithm for arranging panes in a grid,
+//! installing agents for each AI tool, and configuring tmux with barrel styling.
+//!
+//! # Layout Algorithm
+//!
+//! Panes are organized in a column-major grid:
+//! 1. Panes are sorted by (col, row)
+//! 2. Columns are created via horizontal splits from left to right
+//! 3. Rows within each column are created via vertical splits
+//! 4. Width/height percentages are applied during splits
+//!
+//! # Session Features
+//!
+//! - Mouse support with clipboard integration
+//! - Pane border titles showing shell names
+//! - Color-coded panes based on shell configuration
+//! - Automatic agent installation per driver type
+//! - Manifest path stored in session environment for cleanup
 
 use std::{collections::HashMap, io::Write};
 
@@ -64,7 +82,14 @@ const PANE_BORDER_FORMAT: &str = "#[align=centre] #{pane_title} ";
 /// Environment variable name for storing manifest path in tmux session
 pub const BARREL_MANIFEST_ENV: &str = "BARREL_MANIFEST";
 
-/// Build the command to run for an AI shell (claude or opencode)
+/// Build the command string for an AI shell (Claude or OpenCode).
+///
+/// Both Claude Code and OpenCode use similar CLI interfaces, so this function
+/// handles both by parameterizing the command name. The command is built using
+/// `ClaudeCommand` builder which handles argument escaping and formatting.
+///
+/// Note: The `_index` parameter is unused because index content is handled via
+/// CLAUDE.md symlink for Claude (installed by the driver).
 fn build_ai_command(
     command_name: &str,
     config: &AiShellConfig,
@@ -98,7 +123,15 @@ fn build_ai_command(
     }
 }
 
-/// Build the command for Codex CLI
+/// Build the command string for Codex CLI.
+///
+/// Codex has a different CLI interface than Claude/OpenCode. Key differences:
+/// - Uses `-c` for config options instead of dedicated flags
+/// - Agents are discovered via `project_doc_fallback_filenames` config
+/// - Initial prompt is passed as a positional argument
+///
+/// The command includes `-c 'project_doc_fallback_filenames=[".codex/AGENTS.md"]'`
+/// to ensure Codex discovers the merged agents file created by the driver.
 fn build_codex_command(
     config: &AiShellConfig,
     _workspace_dir: Option<&std::path::Path>,
@@ -145,7 +178,20 @@ pub fn build_pane_command(
     }
 }
 
-/// Create a tmux workspace from a config
+/// Create a tmux workspace from a configuration.
+///
+/// This is the main entry point for workspace creation. It:
+///
+/// 1. **Resolves panes** from the profile configuration
+/// 2. **Installs agents** for each AI driver (Claude, Codex, OpenCode)
+/// 3. **Creates the tmux session** with the first pane
+/// 4. **Configures session options** (mouse, clipboard, styling)
+/// 5. **Builds the grid layout** via horizontal/vertical splits
+/// 6. **Sends commands** to each pane to launch the shells
+///
+/// The layout algorithm groups panes by column, creates columns via horizontal
+/// splits, then creates rows within each column via vertical splits. Width/height
+/// percentages are applied during the split operations.
 pub fn create_workspace(
     session_name: &str,
     config: &WorkspaceConfig,
@@ -466,6 +512,10 @@ pub fn create_workspace(
     Ok(())
 }
 
+/// Configure a pane's title and background color.
+///
+/// Called after all panes are created to set visual properties. The title
+/// appears in the pane border, and the background color is set if configured.
 fn configure_pane(target: &str, pane: &ResolvedPane) -> Result<()> {
     let mut select = SelectPane::new().target(target).title(&pane.name);
 
@@ -479,6 +529,16 @@ fn configure_pane(target: &str, pane: &ResolvedPane) -> Result<()> {
     select.run()
 }
 
+/// Create a temporary bash wrapper script for a pane.
+///
+/// The wrapper script:
+/// 1. Clears the terminal
+/// 2. Displays pane notes (if configured) or a simple title
+/// 3. Removes itself from disk (self-cleaning)
+/// 4. Execs into fish shell with greeting and title disabled
+///
+/// This approach allows displaying startup information before the shell
+/// takes over, while keeping the pane in a clean state.
 fn create_wrapper_script(id: usize, pane: &ResolvedPane) -> Result<String> {
     let wrapper_path = format!("/tmp/barrel_ws_{}", id);
     let mut file = std::fs::File::create(&wrapper_path)?;
