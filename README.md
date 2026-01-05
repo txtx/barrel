@@ -23,6 +23,9 @@ agents/
   security-auditor.md
 ```
 
+![Agent Portability](docs/agents.png)
+
+
 Switch LLMs by changing one line. No more copy-pasting between `.claude/agents/` and `.codex/agents/`.
 
 ### Reproducible Workspaces
@@ -60,12 +63,14 @@ terminal:
 barrel
 ```
 
+![Tmux workspace layouts](docs/tmux-layout.png)
+
 Claude on the left, servers on the right. Close everything, come back tomorrow, run `barrel` again—exactly where you left off.
 
 ## Installation
 
 ```bash
-curl -sL https://install.barrel.rs | bash
+curl -sL https://raw.githubusercontent.com/txtx/barrel/main/scripts/install.sh | bash
 ```
 
 Or build from source:
@@ -80,6 +85,8 @@ cargo barrel-install
 - One or more AI coding assistants (Claude Code, Codex, OpenCode)
 
 ## Quick Start
+
+> See the full [Quick Start guide](https://barrel-docs.vercel.app/quick-start) for detailed instructions.
 
 ```bash
 # Initialize a workspace in current directory
@@ -189,6 +196,11 @@ agents:
 - Work across several repositories that need to be running simultaneously
 - Want reproducible dev environments they can spin up instantly
 - Believe their tooling should adapt to them, not the other way around
+
+## Links
+
+- [Website](https://barrel-www.vercel.app)
+- [Documentation](https://barrel-docs.vercel.app)
 
 ## License
 

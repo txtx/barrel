@@ -3,7 +3,7 @@
 # Barrel installer script
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/ludovic/barrel/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/txtx/barrel/main/scripts/install.sh | bash
 #
 # Options:
 #   BARREL_VERSION=v0.1.0  Install a specific version
@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-REPO="ludovic/barrel"
+REPO="txtx/barrel"
 BINARY_NAME="barrel"
 
 # Colors
