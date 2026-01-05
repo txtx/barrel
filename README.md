@@ -65,7 +65,7 @@ Claude on the left, servers on the right. Close everything, come back tomorrow, 
 ## Installation
 
 ```bash
-curl -sL https://install.barrel.rs | bash
+curl -sL https://raw.githubusercontent.com/txtx/barrel/main/scripts/install.sh | bash
 ```
 
 Or build from source:
