@@ -619,10 +619,14 @@ fn create_wrapper_script(id: usize, pane: &ResolvedPane) -> Result<String> {
     }
 
     writeln!(file, "rm '{}'", wrapper_path)?;
+    writeln!(file, "if command -v fish >/dev/null 2>&1; then")?;
     writeln!(
         file,
-        "exec fish -C 'set fish_greeting; function fish_title; end'"
+        "  exec fish -C 'set fish_greeting; function fish_title; end'"
     )?;
+    writeln!(file, "else")?;
+    writeln!(file, "  exec \"$SHELL\"")?;
+    writeln!(file, "fi")?;
 
     drop(file);
 
