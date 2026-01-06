@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Barrel is a tmux workspace launcher"
 license = "Apache-2.0"
@@ -15,7 +15,11 @@ resolver = "2"
 
 [workspace.dependencies]
 anyhow = { version = "1.0", default-features = false }
-clap = { version = "4.5", default-features = false, features = ["std", "derive", "help"] }
+clap = { version = "4.5", default-features = false, features = [
+    "std",
+    "derive",
+    "help",
+] }
 colored = { version = "2.1", default-features = false }
 dialoguer = { version = "0.11", default-features = false }
 serde = { version = "1.0", default-features = false }
