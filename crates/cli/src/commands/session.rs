@@ -1,0 +1,583 @@
+//! Session management commands for barrel.
+//!
+//! This module handles tmux session lifecycle:
+//! - Listing running sessions
+//! - Launching workspaces (shell, tmux, tmux_cc modes)
+//! - Killing sessions with cleanup
+
+use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+use barrel_core::{
+    ClaudeDriver, ProfileType, ShellConfig,
+    claude::ClaudeCommand,
+    config::{expand_path, load_config},
+    drivers, git,
+    tmux::{
+        BARREL_MANIFEST_ENV, attach_session, create_workspace as tmux_create_workspace,
+        detach_session, get_environment, has_session, kill_session, list_sessions,
+    },
+};
+use colored::Colorize;
+
+use crate::{
+    commands::agent::{cleanup_agents, format_cleaned_drivers},
+    display_path,
+};
+
+// =============================================================================
+// Session Listing
+// =============================================================================
+
+/// List running tmux sessions.
+///
+/// If `barrel_only` is true, only shows sessions created by barrel
+/// (identified by the BARREL_MANIFEST environment variable).
+pub fn do_list_sessions(barrel_only: bool) -> Result<()> {
+    let sessions = list_sessions(barrel_only)?;
+
+    if sessions.is_empty() {
+        if barrel_only {
+            println!("{}", "No barrel sessions running".dimmed());
+        } else {
+            println!("{}", "No tmux sessions running".dimmed());
+        }
+        return Ok(());
+    }
+
+    use comfy_table::{Table, presets::NOTHING};
+
+    let mut table = Table::new();
+    table.load_preset(NOTHING);
+
+    for session in &sessions {
+        let attached = if session.attached {
+            "(attached)".green().to_string()
+        } else {
+            String::new()
+        };
+
+        let location = session
+            .working_dir
+            .as_ref()
+            .map(|d| display_path(Path::new(d)))
+            .unwrap_or_else(|| "-".to_string());
+
+        let panes_label = if session.panes == 1 { "pane" } else { "panes" };
+        table.add_row(vec![
+            session.name.blue().to_string(),
+            location.dimmed().to_string(),
+            format!("{} {}", session.panes, panes_label)
+                .dimmed()
+                .to_string(),
+            attached,
+        ]);
+    }
+
+    println!("{table}");
+
+    Ok(())
+}
+
+// =============================================================================
+// Session Killing
+// =============================================================================
+
+/// Kill a workspace session with optional cleanup.
+pub fn do_kill_workspace(
+    workspaces_dir: &Path,
+    name: &str,
+    keep_agents: bool,
+    prune_worktree: bool,
+    worktree_branch: Option<&str>,
+    skip_confirm: bool,
+) -> Result<()> {
+    if !has_session(name) {
+        eprintln!("{} Session '{}' not found", "✘".red(), name);
+        eprintln!();
+        let _ = do_list_sessions(false);
+        return Ok(());
+    }
+
+    if !skip_confirm {
+        use dialoguer::{Confirm, theme::ColorfulTheme};
+        let theme = ColorfulTheme::default();
+        let confirmed = Confirm::with_theme(&theme)
+            .with_prompt(format!("Kill session '{}'?", name))
+            .default(true)
+            .interact()?;
+
+        if !confirmed {
+            println!("{}", "Cancelled".dimmed());
+            return Ok(());
+        }
+    }
+
+    // Skip agent cleanup for worktree sessions - the worktree directory
+    // may be pruned anyway, and we don't want to accidentally clean the main repo
+    let cleaned = if !keep_agents && worktree_branch.is_none() {
+        let session_manifest = get_environment(name, BARREL_MANIFEST_ENV).map(PathBuf::from);
+        let config_path = workspaces_dir.join(name).join("barrel.yaml");
+        let local_config = std::env::current_dir().ok().map(|d| d.join("barrel.yaml"));
+
+        let cfg = session_manifest
+            .and_then(|p| load_config(&p).ok())
+            .or_else(|| load_config(&config_path).ok())
+            .or_else(|| local_config.and_then(|p| load_config(&p).ok()));
+
+        cfg.and_then(|c| c.workspace_dir())
+            .map(|dir| cleanup_agents(&dir))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    detach_session(name)?;
+    kill_session(name)?;
+
+    println!("{} {} {}", "✔".green(), "Killed workspace".dimmed(), name);
+
+    if !cleaned.is_empty() {
+        println!(
+            "{} {} {} agents",
+            "✔".green(),
+            "Cleaned".dimmed(),
+            format_cleaned_drivers(&cleaned)
+        );
+    }
+
+    // Handle worktree pruning if requested
+    if prune_worktree {
+        if let Some(branch) = worktree_branch {
+            let cwd = std::env::current_dir()?;
+            if git::is_git_repo(&cwd) {
+                match git::remove_worktree(&cwd, branch, true) {
+                    Ok(true) => {
+                        println!(
+                            "{} {} {}",
+                            "✔".green(),
+                            "Removed worktree for".dimmed(),
+                            branch.blue()
+                        );
+                    }
+                    Ok(false) => {
+                        eprintln!("{} No worktree found for branch '{}'", "⚠".yellow(), branch);
+                    }
+                    Err(e) => {
+                        eprintln!("{} Failed to remove worktree: {}", "✘".red(), e);
+                    }
+                }
+            }
+        } else {
+            eprintln!(
+                "{} --prune requires -w/--worktree to specify which branch",
+                "⚠".yellow()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+// =============================================================================
+// Session Launching
+// =============================================================================
+
+/// Launch a workspace from a manifest file.
+///
+/// This is the main launch path when running `barrel` with a `barrel.yaml` present.
+pub fn launch_from_manifest(config_path: &Path, profile: Option<&str>) -> Result<()> {
+    if !config_path.exists() {
+        eprintln!(
+            "{}",
+            format!("Manifest not found: {}", config_path.display()).red()
+        );
+        std::process::exit(1);
+    }
+
+    let session_name = config_path
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let config = load_config(config_path)?;
+    let profile_type = config.profile_type(profile);
+
+    if !session_name.is_empty() && has_session(&session_name) {
+        // Check if this session belongs to a different workspace
+        let current_manifest = config_path.to_path_buf();
+
+        if let Some(existing_manifest) = get_environment(&session_name, BARREL_MANIFEST_ENV) {
+            let existing_path = PathBuf::from(&existing_manifest);
+            if existing_path != current_manifest {
+                eprintln!(
+                    "{} A session named '{}' already exists for a different workspace:",
+                    "✘".red(),
+                    session_name
+                );
+                eprintln!(
+                    "  {} {}",
+                    "existing:".dimmed(),
+                    display_path(&existing_path)
+                );
+                eprintln!(
+                    "  {} {}",
+                    "current: ".dimmed(),
+                    display_path(&current_manifest)
+                );
+                eprintln!();
+                eprintln!(
+                    "{}",
+                    "To fix this, update the 'workspace' field in your barrel.yaml to use a unique name.".yellow()
+                );
+                std::process::exit(1);
+            }
+        }
+
+        println!(
+            "{}",
+            format!("Attaching to existing session: {}", session_name).blue()
+        );
+        return match profile_type {
+            ProfileType::TmuxCC => {
+                std::process::Command::new("tmux")
+                    .args(["-CC", "attach-session", "-t", &session_name])
+                    .status()?;
+                Ok(())
+            }
+            _ => attach_session(&session_name),
+        };
+    }
+
+    match profile_type {
+        ProfileType::Shell => launch_shell_mode(&config, profile),
+        ProfileType::TmuxCC => launch_tmux_cc_mode(config_path, &config, profile),
+        ProfileType::Tmux => launch_tmux_mode(&config, profile),
+    }
+}
+
+/// Launch in shell mode (no tmux, just run the first shell).
+fn launch_shell_mode(config: &barrel_core::WorkspaceConfig, profile: Option<&str>) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+
+    let panes = config.resolve_panes(profile);
+    let index = config.load_index();
+
+    if panes.is_empty() {
+        anyhow::bail!("No shells defined in profile");
+    }
+
+    let first_pane = &panes[0];
+
+    let work_dir = first_pane
+        .path()
+        .map(|p| PathBuf::from(expand_path(p)))
+        .or_else(|| config.workspace_dir());
+
+    if let Some(ref workspace_dir) = work_dir {
+        let (driver_name, agent_names) = match &first_pane.config {
+            ShellConfig::Claude(c) => ("claude", &c.agents),
+            ShellConfig::Codex(c) => ("codex", &c.agents),
+            ShellConfig::Opencode(c) => ("opencode", &c.agents),
+            ShellConfig::Antigravity(c) => ("antigravity", &c.agents),
+            ShellConfig::Custom(_) => ("", &Vec::new()),
+        };
+
+        if !agent_names.is_empty()
+            && let Some(driver) = drivers::get_driver(driver_name)
+        {
+            let agent_paths = config.resolve_agents(agent_names);
+            if let Some(count) = driver
+                .install_agents(workspace_dir, &agent_paths)
+                .ok()
+                .filter(|&c| c > 0)
+            {
+                let agents_word = if count == 1 { "agent" } else { "agents" };
+                eprintln!(
+                    "{} {} {} {} for {}",
+                    "✔".green(),
+                    "Installed".dimmed(),
+                    count,
+                    agents_word,
+                    driver.name()
+                );
+            }
+        }
+
+        if matches!(&first_pane.config, ShellConfig::Claude(_)) {
+            let claude_driver = ClaudeDriver;
+            if claude_driver
+                .install_index(config, workspace_dir)
+                .unwrap_or(false)
+            {
+                eprintln!("{} {} CLAUDE.md symlink", "✔".green(), "Created".dimmed());
+            }
+        }
+    }
+
+    let command = build_shell_command(&first_pane.config, index.as_ref());
+
+    if let Some(ref dir) = work_dir {
+        std::env::set_current_dir(dir)?;
+    }
+
+    if let Some(cmd) = command {
+        let err = std::process::Command::new("sh").arg("-c").arg(&cmd).exec();
+        Err(err.into())
+    } else {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
+        let err = std::process::Command::new(&shell).exec();
+        Err(err.into())
+    }
+}
+
+/// Launch a specific shell by name from the manifest.
+pub fn launch_shell_by_name(manifest_path: &Path, shell_name: &str) -> Result<()> {
+    let config = load_config(manifest_path)?;
+    let index = config.load_index();
+
+    let shell_config = config
+        .shells
+        .iter()
+        .find(|s| s.shell_type() == shell_name)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Shell '{}' not found in manifest. Available shells: {}",
+                shell_name,
+                config
+                    .shells
+                    .iter()
+                    .map(|s| s.shell_type())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+
+    let current_dir = std::env::current_dir().ok();
+
+    if let Some(ref install_dir) = current_dir {
+        let (driver_name, agent_names) = match shell_config {
+            ShellConfig::Claude(c) => ("claude", &c.agents),
+            ShellConfig::Codex(c) => ("codex", &c.agents),
+            ShellConfig::Opencode(c) => ("opencode", &c.agents),
+            ShellConfig::Antigravity(c) => ("antigravity", &c.agents),
+            ShellConfig::Custom(_) => ("", &Vec::new()),
+        };
+
+        if !agent_names.is_empty()
+            && let Some(driver) = drivers::get_driver(driver_name)
+        {
+            let agent_paths = config.resolve_agents(agent_names);
+            if let Some(count) = driver
+                .install_agents(install_dir, &agent_paths)
+                .ok()
+                .filter(|&c| c > 0)
+            {
+                let agents_word = if count == 1 { "agent" } else { "agents" };
+                eprintln!(
+                    "{} {} {} {} for {}",
+                    "✔".green(),
+                    "Installed".dimmed(),
+                    count,
+                    agents_word,
+                    driver.name()
+                );
+            }
+        }
+
+        if matches!(shell_config, ShellConfig::Claude(_)) {
+            let claude_driver = ClaudeDriver;
+            if claude_driver
+                .install_index(&config, install_dir)
+                .unwrap_or(false)
+            {
+                eprintln!("{} {} CLAUDE.md symlink", "✔".green(), "Created".dimmed());
+            }
+        }
+    }
+
+    let command = build_shell_command(shell_config, index.as_ref());
+
+    let status = if let Some(cmd) = command {
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .status()
+    } else {
+        eprintln!("{}", "No command built, falling back to shell".red());
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
+        std::process::Command::new(&shell).status()
+    };
+
+    if let Some(ref install_dir) = current_dir {
+        let cleaned = cleanup_agents(install_dir);
+        if !cleaned.is_empty() {
+            eprintln!(
+                "{} {} {} artifacts",
+                "✔".green(),
+                "Cleaned".dimmed(),
+                format_cleaned_drivers(&cleaned)
+            );
+        }
+    }
+
+    status?;
+    Ok(())
+}
+
+/// Launch in tmux control mode (-CC) for iTerm2 integration.
+fn launch_tmux_cc_mode(
+    config_path: &Path,
+    config: &barrel_core::WorkspaceConfig,
+    profile: Option<&str>,
+) -> Result<()> {
+    let session_name = config_path
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| config.workspace.clone());
+
+    if has_session(&session_name) {
+        println!(
+            "{}",
+            format!("Attaching to existing session (CC mode): {}", session_name).blue()
+        );
+        std::process::Command::new("tmux")
+            .args(["-CC", "attach-session", "-t", &session_name])
+            .status()?;
+        return Ok(());
+    }
+
+    tmux_create_workspace(&session_name, config, profile)?;
+    println!(
+        "{} {} {}",
+        "✔".green(),
+        "Created tmux session (CC mode)".dimmed(),
+        config.workspace
+    );
+
+    std::process::Command::new("tmux")
+        .args(["-CC", "attach-session", "-t", &session_name])
+        .status()?;
+
+    Ok(())
+}
+
+/// Launch in standard tmux mode.
+fn launch_tmux_mode(config: &barrel_core::WorkspaceConfig, profile: Option<&str>) -> Result<()> {
+    let session_name = config
+        .manifest_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| config.workspace.clone());
+
+    if has_session(&session_name) {
+        println!(
+            "{}",
+            format!("Attaching to existing session: {}", session_name).blue()
+        );
+        attach_session(&session_name)?;
+        return Ok(());
+    }
+
+    tmux_create_workspace(&session_name, config, profile)?;
+    println!(
+        "{} {} {}",
+        "✔".green(),
+        "Created tmux session".dimmed(),
+        config.workspace
+    );
+    attach_session(&session_name)?;
+
+    Ok(())
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/// Build the shell command string for a given shell config.
+fn build_shell_command(
+    shell_config: &ShellConfig,
+    index: Option<&barrel_core::WorkspaceIndex>,
+) -> Option<String> {
+    match shell_config {
+        ShellConfig::Claude(c) => {
+            let mut cmd = ClaudeCommand::new();
+            if let Some(model) = &c.model {
+                cmd = cmd.model(model);
+            }
+            if !c.allowed_tools.is_empty() {
+                cmd = cmd.allowed_tools(c.allowed_tools.clone());
+            }
+            if !c.disallowed_tools.is_empty() {
+                cmd = cmd.disallowed_tools(c.disallowed_tools.clone());
+            }
+            if let Some(prompt) = &c.prompt {
+                cmd = cmd.prompt(prompt);
+            }
+            for arg in &c.args {
+                cmd = cmd.extra_arg(arg);
+            }
+            Some(cmd.build())
+        }
+        ShellConfig::Codex(c) => {
+            let mut parts = vec!["codex".to_string()];
+            if let Some(model) = &c.model {
+                parts.push("-m".to_string());
+                parts.push(model.clone());
+            }
+            for arg in &c.args {
+                parts.push(arg.clone());
+            }
+            if let Some(prompt) = &c.prompt {
+                let escaped = prompt.replace('\'', "'\\''");
+                parts.push(format!("'{}'", escaped));
+            } else if let Some(idx) = index {
+                let escaped = idx.to_initial_prompt().replace('\'', "'\\''");
+                parts.push(format!("'{}'", escaped));
+            }
+            Some(parts.join(" "))
+        }
+        ShellConfig::Opencode(c) => {
+            let mut parts = vec!["opencode".to_string()];
+            if let Some(model) = &c.model {
+                parts.push("-m".to_string());
+                parts.push(model.clone());
+            }
+            for arg in &c.args {
+                parts.push(arg.clone());
+            }
+            if let Some(prompt) = &c.prompt {
+                let escaped = prompt.replace('\'', "'\\''");
+                parts.push(format!("'{}'", escaped));
+            } else if let Some(idx) = index {
+                let escaped = idx.to_initial_prompt().replace('\'', "'\\''");
+                parts.push(format!("'{}'", escaped));
+            }
+            Some(parts.join(" "))
+        }
+        ShellConfig::Antigravity(c) => {
+            let mut parts = vec!["antigravity".to_string()];
+            if let Some(model) = &c.model {
+                parts.push("-m".to_string());
+                parts.push(model.clone());
+            }
+            for arg in &c.args {
+                parts.push(arg.clone());
+            }
+            if let Some(prompt) = &c.prompt {
+                let escaped = prompt.replace('\'', "'\\''");
+                parts.push(format!("'{}'", escaped));
+            } else if let Some(idx) = index {
+                let escaped = idx.to_initial_prompt().replace('\'', "'\\''");
+                parts.push(format!("'{}'", escaped));
+            }
+            Some(parts.join(" "))
+        }
+        ShellConfig::Custom(c) => c.command.clone(),
+    }
+}
