@@ -1,15 +1,17 @@
 //! Agent driver implementations
 //!
 //! This module provides the `AgentDriver` trait and implementations for various
-//! AI coding tools (Claude Code, Codex, OpenCode). Drivers handle installing
-//! agent files in tool-specific formats.
+//! AI coding tools (Claude Code, Codex, OpenCode, Antigravity). Drivers handle
+//! installing agent files in tool-specific formats.
 
+mod antigravity;
 mod claude;
 mod codex;
 mod opencode;
 
 use std::path::{Path, PathBuf};
 
+pub use antigravity::AntigravityDriver;
 use anyhow::Result;
 pub use claude::ClaudeDriver;
 pub use codex::CodexDriver;
@@ -47,6 +49,7 @@ pub fn get_driver(name: &str) -> Option<Box<dyn AgentDriver>> {
         "claude" => Some(Box::new(ClaudeDriver)),
         "codex" => Some(Box::new(CodexDriver)),
         "opencode" => Some(Box::new(OpenCodeDriver)),
+        "antigravity" => Some(Box::new(AntigravityDriver)),
         _ => None,
     }
 }
@@ -57,6 +60,7 @@ pub fn all_drivers() -> Vec<Box<dyn AgentDriver>> {
         Box::new(ClaudeDriver),
         Box::new(CodexDriver),
         Box::new(OpenCodeDriver),
+        Box::new(AntigravityDriver),
     ]
 }
 

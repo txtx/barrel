@@ -595,6 +595,8 @@ pub enum ShellConfig {
     Codex(AiShellConfig),
     /// OpenCode shell
     Opencode(AiShellConfig),
+    /// Google Antigravity shell
+    Antigravity(AiShellConfig),
     /// Custom shell with arbitrary command
     Custom(CustomShellConfig),
 }
@@ -643,6 +645,18 @@ impl<'de> serde::Deserialize<'de> for ShellConfig {
                 prompt: raw.prompt,
                 args: raw.args,
             })),
+            "antigravity" => Ok(ShellConfig::Antigravity(AiShellConfig {
+                shell_type: raw.shell_type,
+                path: raw.path,
+                color: raw.color,
+                notes: raw.notes,
+                model: raw.model,
+                agents: raw.agents,
+                allowed_tools: raw.allowed_tools,
+                disallowed_tools: raw.disallowed_tools,
+                prompt: raw.prompt,
+                args: raw.args,
+            })),
             _ => Ok(ShellConfig::Custom(CustomShellConfig {
                 shell_type: raw.shell_type,
                 path: raw.path,
@@ -658,9 +672,10 @@ impl ShellConfig {
     /// Get the shell type identifier
     pub fn shell_type(&self) -> &str {
         match self {
-            ShellConfig::Claude(c) | ShellConfig::Codex(c) | ShellConfig::Opencode(c) => {
-                &c.shell_type
-            }
+            ShellConfig::Claude(c)
+            | ShellConfig::Codex(c)
+            | ShellConfig::Opencode(c)
+            | ShellConfig::Antigravity(c) => &c.shell_type,
             ShellConfig::Custom(c) => &c.shell_type,
         }
     }
@@ -668,9 +683,10 @@ impl ShellConfig {
     /// Get the color if set
     pub fn color(&self) -> Option<&str> {
         match self {
-            ShellConfig::Claude(c) | ShellConfig::Codex(c) | ShellConfig::Opencode(c) => {
-                c.color.as_deref()
-            }
+            ShellConfig::Claude(c)
+            | ShellConfig::Codex(c)
+            | ShellConfig::Opencode(c)
+            | ShellConfig::Antigravity(c) => c.color.as_deref(),
             ShellConfig::Custom(c) => c.color.as_deref(),
         }
     }
@@ -678,7 +694,10 @@ impl ShellConfig {
     /// Set the color
     pub fn set_color(&mut self, color: String) {
         match self {
-            ShellConfig::Claude(c) | ShellConfig::Codex(c) | ShellConfig::Opencode(c) => {
+            ShellConfig::Claude(c)
+            | ShellConfig::Codex(c)
+            | ShellConfig::Opencode(c)
+            | ShellConfig::Antigravity(c) => {
                 c.color = Some(color);
             }
             ShellConfig::Custom(c) => c.color = Some(color),
@@ -688,9 +707,10 @@ impl ShellConfig {
     /// Get the path if set
     pub fn path(&self) -> Option<&str> {
         match self {
-            ShellConfig::Claude(c) | ShellConfig::Codex(c) | ShellConfig::Opencode(c) => {
-                c.path.as_deref()
-            }
+            ShellConfig::Claude(c)
+            | ShellConfig::Codex(c)
+            | ShellConfig::Opencode(c)
+            | ShellConfig::Antigravity(c) => c.path.as_deref(),
             ShellConfig::Custom(c) => c.path.as_deref(),
         }
     }
@@ -698,7 +718,10 @@ impl ShellConfig {
     /// Set the path
     pub fn set_path(&mut self, path: String) {
         match self {
-            ShellConfig::Claude(c) | ShellConfig::Codex(c) | ShellConfig::Opencode(c) => {
+            ShellConfig::Claude(c)
+            | ShellConfig::Codex(c)
+            | ShellConfig::Opencode(c)
+            | ShellConfig::Antigravity(c) => {
                 c.path = Some(path);
             }
             ShellConfig::Custom(c) => c.path = Some(path),
@@ -708,7 +731,10 @@ impl ShellConfig {
     /// Get notes
     pub fn notes(&self) -> &[String] {
         match self {
-            ShellConfig::Claude(c) | ShellConfig::Codex(c) | ShellConfig::Opencode(c) => &c.notes,
+            ShellConfig::Claude(c)
+            | ShellConfig::Codex(c)
+            | ShellConfig::Opencode(c)
+            | ShellConfig::Antigravity(c) => &c.notes,
             ShellConfig::Custom(c) => &c.notes,
         }
     }
@@ -854,7 +880,7 @@ agents:
 # =============================================================================
 # Define shells that can be used in terminal profiles
 #
-# Built-in types: claude, codex, opencode, shell
+# Built-in types: claude, codex, opencode, antigravity, shell
 # Custom types use the 'command' field
 
 shells:
@@ -879,6 +905,12 @@ shells:
   # - type: opencode
   #   color: blue
   #   agents: ["*"]
+
+  # Antigravity - Google coding assistant
+  # - type: antigravity
+  #   color: orange
+  #   agents: ["*"]
+  #   # model: gemini-3-pro    # Model to use
 
   # Regular shell with notes displayed on startup
   - type: shell
