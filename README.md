@@ -4,11 +4,13 @@ A CLI for AI-assisted development. Portable agents across LLMs. Reproducible ter
 
 ## The Problem
 
-You're deep in a debugging session with Claude when you hear Codex just shipped something interesting. But switching means reconfiguring everything—your prompts, your agents, your carefully crafted system instructions scattered across `.claude/`, `.codex/`, and whatever directory the next tool invents.
+Vibe coding is here. LLMs are racing to top benchmarks with infinite funding behind them. You want to switch when one pulls ahead—but your agents are stuck in `.claude/` or `.codex/`.
 
-Meanwhile, your terminal is a mess. Three projects, five tabs, that one background process you forgot about.
+Not using agents? You're leaving most of the LLM potential on the table. Copy-pasting them between tools? They drift out of sync.
 
-**barrel fixes both.**
+Meanwhile, your terminal is chaos and your IDE crashes and keep losing context.
+
+**barrel fixes both and going beyond.**
 
 ## Features
 
@@ -86,6 +88,8 @@ cargo barrel-install
 
 ### Supported LLMs
 
+Agents can be dispatched to any of the following LLM:
+
 - [x] [Claude Code](https://claude.ai/code) - Anthropic
 - [x] [Codex](https://openai.com/codex) - OpenAI
 - [x] [OpenCode](https://opencode.ai) - Open source
@@ -115,43 +119,25 @@ barrel
 ## Usage
 
 ```bash
-# Setup
-barrel init                     # Create barrel.yaml in current directory
-barrel bootstrap                # [Experimental] Auto-discover agents
-
-# Launching
-barrel                          # Launch workspace from ./barrel.yaml
-barrel claude                   # Launch just Claude with agents
-barrel codex                    # Launch just Codex with agents
-barrel <shell>                  # Launch a specific shell from barrel.yaml
-barrel -m path/to/barrel.yaml   # Launch from specific manifest
-barrel -p <profile>             # Use a specific terminal profile
-
-# Git Worktrees
-barrel -w feat/auth             # Create worktree + launch workspace there
-barrel -w feat/auth claude      # Launch specific shell in worktree
-barrel -w feat/auth -k ws --prune  # Kill workspace + remove worktree
+# Daily workflow
+barrel                          # Launch workspace from barrel.yaml
+barrel -w feat/auth             # Launch in a git worktree
+barrel -k                       # Kill session and clean up
 
 # Sessions
-barrel session list             # List running barrel sessions
-barrel session ls --all         # List all tmux sessions
-barrel session new              # Create new session (same as barrel)
-barrel session new claude       # Create session with specific shell
-barrel session join <name>      # Attach to an existing session
+barrel session list             # List running sessions
+barrel session join <name>      # Attach to a session
 barrel session kill <name>      # Kill a session
 
-# Management (shortcuts)
-barrel -k <workspace>           # Kill workspace and clean up agents
-barrel -k <workspace> --keep-agents  # Kill but preserve agent symlinks
-
 # Agents
-barrel agent list               # List all agents (local + global)
-barrel agent import <path>      # Import agent file or directory
-barrel agent new [name]         # Create a new agent
-barrel agent fork <name>        # Copy a global agent locally
-barrel agent link <name>        # Symlink a global agent locally
-barrel agent rm <name>          # Remove an agent
+barrel agent list               # List all agents
+barrel agent import <path>      # Import from file or directory
+barrel agent new                # Create a new agent
+barrel agent fork <name>        # Copy global agent locally
+barrel agent link <name>        # Symlink global agent locally
 ```
+
+See the [CLI Reference](https://barrel-docs.vercel.app/commands) for all options.
 
 ## Configuration
 
