@@ -123,6 +123,38 @@ fn build_ai_command(
     }
 }
 
+/// Build the command string for Antigravity CLI.
+///
+/// Antigravity is Google's AI coding assistant. It automatically discovers
+/// project rules from `.antigravity/rules.md` (where barrel installs agents).
+///
+/// The CLI interface supports:
+/// - `-m` for model selection
+/// - Initial prompt as a positional argument
+fn build_antigravity_command(config: &AiShellConfig, index: Option<&WorkspaceIndex>) -> String {
+    let mut parts = vec!["antigravity".to_string()];
+
+    if let Some(model) = &config.model {
+        parts.push("-m".to_string());
+        parts.push(model.clone());
+    }
+
+    for arg in &config.args {
+        parts.push(arg.clone());
+    }
+
+    // Use single quotes for shell safety
+    if let Some(prompt) = &config.prompt {
+        let escaped = prompt.replace('\'', "'\\''");
+        parts.push(format!("'{}'", escaped));
+    } else if let Some(idx) = index {
+        let escaped = idx.to_initial_prompt().replace('\'', "'\\''");
+        parts.push(format!("'{}'", escaped));
+    }
+
+    parts.join(" ")
+}
+
 /// Build the command string for Codex CLI.
 ///
 /// Codex has a different CLI interface than Claude/OpenCode. Key differences:
@@ -174,6 +206,7 @@ pub fn build_pane_command(
         ShellConfig::Claude(config) => Some(build_ai_command("claude", config, index)),
         ShellConfig::Codex(config) => Some(build_codex_command(config, workspace_dir, index)),
         ShellConfig::Opencode(config) => Some(build_ai_command("opencode", config, index)),
+        ShellConfig::Antigravity(config) => Some(build_antigravity_command(config, index)),
         ShellConfig::Custom(config) => config.command.clone(),
     }
 }
@@ -209,18 +242,21 @@ pub fn create_workspace(
     let mut claude_agents: Vec<String> = Vec::new();
     let mut codex_agents: Vec<String> = Vec::new();
     let mut opencode_agents: Vec<String> = Vec::new();
+    let mut antigravity_agents: Vec<String> = Vec::new();
 
     for pane in &panes {
         match &pane.config {
             ShellConfig::Claude(c) => claude_agents.extend(c.agents.iter().cloned()),
             ShellConfig::Codex(c) => codex_agents.extend(c.agents.iter().cloned()),
             ShellConfig::Opencode(c) => opencode_agents.extend(c.agents.iter().cloned()),
+            ShellConfig::Antigravity(c) => antigravity_agents.extend(c.agents.iter().cloned()),
             ShellConfig::Custom(_) => {}
         }
     }
     claude_agents.dedup();
     codex_agents.dedup();
     opencode_agents.dedup();
+    antigravity_agents.dedup();
 
     // Install agents for each driver that has panes
     if let Some(ref workspace_dir) = workspace_dir {
@@ -228,6 +264,7 @@ pub fn create_workspace(
             ("claude", &claude_agents),
             ("codex", &codex_agents),
             ("opencode", &opencode_agents),
+            ("antigravity", &antigravity_agents),
         ] {
             if agent_names.is_empty() {
                 continue;

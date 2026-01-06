@@ -56,6 +56,82 @@ pub fn has_session(name: &str) -> bool {
     tmux_status(&["has-session", "-t", name]).unwrap_or(false)
 }
 
+/// Information about a tmux session
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    /// Session name
+    pub name: String,
+    /// Number of windows
+    pub windows: u32,
+    /// Number of panes (across all windows)
+    pub panes: u32,
+    /// Creation time (Unix timestamp)
+    pub created: u64,
+    /// Whether clients are attached
+    pub attached: bool,
+    /// Working directory (from barrel environment)
+    pub working_dir: Option<String>,
+}
+
+/// Get the total number of panes in a session
+fn count_session_panes(session: &str) -> u32 {
+    // list-panes -s lists all panes across all windows in a session
+    tmux(&["list-panes", "-s", "-t", session])
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines().count() as u32)
+        .unwrap_or(0)
+}
+
+/// List all tmux sessions (optionally filtered to barrel sessions only)
+pub fn list_sessions(barrel_only: bool) -> Result<Vec<SessionInfo>> {
+    let output = tmux(&[
+        "list-sessions",
+        "-F",
+        "#{session_name}\t#{session_windows}\t#{session_created}\t#{session_attached}",
+    ])?;
+
+    if !output.status.success() {
+        // No sessions exist
+        return Ok(Vec::new());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut sessions = Vec::new();
+
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 4 {
+            let name = parts[0].to_string();
+
+            // Check if this is a barrel session by looking for BARREL_MANIFEST env var
+            let manifest = get_environment(&name, "BARREL_MANIFEST");
+
+            if barrel_only && manifest.is_none() {
+                continue;
+            }
+
+            // Extract working directory from manifest path
+            let working_dir = manifest.as_ref().and_then(|m| {
+                std::path::Path::new(m)
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string())
+            });
+
+            let panes = count_session_panes(&name);
+
+            sessions.push(SessionInfo {
+                name,
+                windows: parts[1].parse().unwrap_or(0),
+                panes,
+                created: parts[2].parse().unwrap_or(0),
+                attached: parts[3] == "1",
+                working_dir,
+            });
+        }
+    }
+
+    Ok(sessions)
+}
+
 /// Kill a tmux session
 pub fn kill_session(name: &str) -> Result<()> {
     tmux_run(&["kill-session", "-t", name])
