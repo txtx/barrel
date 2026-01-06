@@ -72,7 +72,7 @@ Claude on the left, servers on the right. Close everything, come back tomorrow, 
 ## Installation
 
 ```bash
-curl -sL https://raw.githubusercontent.com/txtx/barrel/main/scripts/install.sh | bash
+curl -sL https://install.barrel.rs | bash
 ```
 
 Or build from source:
@@ -97,7 +97,7 @@ Agents can be dispatched to any of the following LLM:
 
 ## Quick Start
 
-> See the full [Quick Start guide](https://barrel-docs.vercel.app/quick-start) for detailed instructions.
+> See the full [Quick Start guide](https://docs.barrel.rs/quick-start) for detailed instructions.
 
 ```bash
 # Initialize a workspace in current directory
@@ -137,7 +137,7 @@ barrel agent fork <name>        # Copy global agent locally
 barrel agent link <name>        # Symlink global agent locally
 ```
 
-See the [CLI Reference](https://barrel-docs.vercel.app/commands) for all options.
+See the [CLI Reference](https://docs.barrel.rs/commands) for all options.
 
 ## Configuration
 
@@ -208,8 +208,8 @@ agents:
 
 ## Links
 
-- [Website](https://barrel-www.vercel.app)
-- [Documentation](https://barrel-docs.vercel.app)
+- [Website](https://barrel.rs)
+- [Documentation](https://docs.barrel.rs)
 
 ## License
 
