@@ -82,7 +82,14 @@ cargo barrel-install
 ### Prerequisites
 
 - [tmux](https://github.com/tmux/tmux) for workspace management
-- One or more AI coding assistants (Claude Code, Codex, OpenCode)
+- One or more AI coding assistants
+
+### Supported LLMs
+
+- [x] [Claude Code](https://claude.ai/code) - Anthropic
+- [x] [Codex](https://openai.com/codex) - OpenAI
+- [x] [OpenCode](https://opencode.ai) - Open source
+- [x] [Antigravity](https://antigravityai.org) - Google
 
 ## Quick Start
 
@@ -120,7 +127,20 @@ barrel <shell>                  # Launch a specific shell from barrel.yaml
 barrel -m path/to/barrel.yaml   # Launch from specific manifest
 barrel -p <profile>             # Use a specific terminal profile
 
-# Management
+# Git Worktrees
+barrel -w feat/auth             # Create worktree + launch workspace there
+barrel -w feat/auth claude      # Launch specific shell in worktree
+barrel -w feat/auth -k ws --prune  # Kill workspace + remove worktree
+
+# Sessions
+barrel session list             # List running barrel sessions
+barrel session ls --all         # List all tmux sessions
+barrel session new              # Create new session (same as barrel)
+barrel session new claude       # Create session with specific shell
+barrel session join <name>      # Attach to an existing session
+barrel session kill <name>      # Kill a session
+
+# Management (shortcuts)
 barrel -k <workspace>           # Kill workspace and clean up agents
 barrel -k <workspace> --keep-agents  # Kill but preserve agent symlinks
 
@@ -148,6 +168,9 @@ shells:
 
   - type: codex
     agents: ["*"]  # All agents
+
+  - type: antigravity
+    agents: ["*"]
 
   # Custom commands
   - type: shell

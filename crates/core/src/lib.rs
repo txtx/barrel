@@ -5,10 +5,12 @@
 //! - Tmux session management
 //! - Agent driver implementations
 //! - Claude command building
+//! - Git worktree management
 
 pub mod claude;
 pub mod config;
 pub mod drivers;
+pub mod git;
 pub mod tmux;
 
 // Re-export commonly used types at crate root
