@@ -1,6 +1,6 @@
 [package]
-name = "barrel-core"
-description = "Core library for barrel workspace launcher"
+name = "axel-core"
+description = "Core library for axel workspace launcher"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,6 +1,6 @@
-//! Barrel CLI - AI-assisted development workspace manager.
+//! Axel CLI - AI-assisted development workspace manager.
 //!
-//! Barrel provides portable agents across LLMs (Claude Code, Codex, OpenCode) and
+//! Axel provides portable agents across LLMs (Claude Code, Codex, OpenCode) and
 //! reproducible terminal workspaces via tmux. Write agents once and use them with
 //! any supported AI assistant.
 //!
@@ -13,13 +13,13 @@
 //!
 //! # Workflow
 //!
-//! 1. User runs `barrel` in a project directory
-//! 2. CLI finds `barrel.yaml` by walking up the directory tree
+//! 1. User runs `axel` in a project directory
+//! 2. CLI finds `AXEL.md` by walking up the directory tree
 //! 3. Profile type determines launch mode (tmux, iTerm2, or single shell)
 //! 4. Agents are installed via drivers (symlinks for Claude/OpenCode, merged for Codex)
 //! 5. Tmux session is created with configured panes, or shell is exec'd directly
 //!
-//! Core functionality (config parsing, drivers, tmux commands) is in `barrel-core`.
+//! Core functionality (config parsing, drivers, tmux commands) is in `axel-core`.
 
 mod cli;
 mod commands;
@@ -27,7 +27,7 @@ mod commands;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use barrel_core::{
+use axel_core::{
     config::{generate_config, workspaces_dir},
     git,
     tmux::{attach_session, current_session, has_session},
@@ -44,17 +44,17 @@ use commands::{
 // Main Entry Point
 // =============================================================================
 
-/// Entry point for the barrel CLI.
+/// Entry point for the axel CLI.
 ///
 /// Parses command-line arguments and dispatches to the appropriate handler:
 ///
 /// - **Subcommands** (`init`, `bootstrap`, `agent`): Handled first
 /// - **Flags** (`-k`): Kill workspace
-/// - **Shell name**: Launch specific shell from manifest (e.g., `barrel claude`)
-/// - **No args**: Launch full workspace from `barrel.yaml` or show help
+/// - **Shell name**: Launch specific shell from manifest (e.g., `axel claude`)
+/// - **No args**: Launch full workspace from `AXEL.md` or show help
 ///
 /// The manifest path is resolved by walking up the directory tree from the
-/// current directory until `barrel.yaml` is found, or uses the path specified
+/// current directory until `AXEL.md` is found, or uses the path specified
 /// with `-m/--manifest-path`.
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -127,7 +127,7 @@ fn main() -> Result<()> {
                 SessionCommands::List { all } => do_list_sessions(!all),
                 SessionCommands::New { shell } => {
                     if let Some(name) = shell {
-                        launch_shell_by_name(&manifest_path, &name)
+                        launch_shell_by_name(&manifest_path, &name, None)
                     } else {
                         launch_from_manifest(&manifest_path, cli.profile.as_deref())
                     }
@@ -150,7 +150,7 @@ fn main() -> Result<()> {
                         Some(n) => n,
                         None => current_session().ok_or_else(|| {
                             anyhow::anyhow!(
-                                "Not inside a tmux session. Specify a session name: barrel session kill <name>"
+                                "Not inside a tmux session. Specify a session name: axel session kill <name>"
                             )
                         })?,
                     };
@@ -167,12 +167,25 @@ fn main() -> Result<()> {
         };
     }
 
+    // Handle --pane-id without a shell name: send prompt to an existing tmux pane
+    if cli.name.is_none() {
+        if let Some(ref pane_id) = cli.pane_id {
+            let prompt = cli.prompt.as_deref().unwrap_or("");
+            if prompt.is_empty() {
+                eprintln!("{} --pane-id requires --prompt", "✘".red());
+                std::process::exit(1);
+            }
+            axel_core::tmux::send_keys(pane_id, prompt)?;
+            return Ok(());
+        }
+    }
+
     if let Some(name) = cli.kill {
         let session_name = if name.is_empty() {
             // No workspace specified, try to detect current tmux session
             current_session().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "Not inside a tmux session. Specify a workspace name: barrel -k <workspace>"
+                    "Not inside a tmux session. Specify a workspace name: axel -k <workspace>"
                 )
             })?
         } else {
@@ -188,14 +201,14 @@ fn main() -> Result<()> {
         )?;
     } else if let Some(ref name) = cli.name {
         if name == "setup" {
-            setup_barrel()?;
+            setup_axel()?;
         } else if manifest_path.exists() {
-            launch_shell_by_name(&manifest_path, name)?;
+            launch_shell_by_name(&manifest_path, name, cli.prompt.as_deref())?;
         } else {
             eprintln!(
-                "{} No barrel.yaml found. Run '{}' to create one.",
+                "{} No AXEL.md found. Run '{}' to create one.",
                 "✘".red(),
-                "barrel init".blue()
+                "axel init".blue()
             );
             std::process::exit(1);
         }
@@ -223,19 +236,19 @@ fn make_absolute(path: &Path) -> PathBuf {
     }
 }
 
-/// Resolve manifest path from CLI option or default to ./barrel.yaml
+/// Resolve manifest path from CLI option or default to ./AXEL.md
 fn resolve_manifest_path(cli_path: Option<&str>) -> PathBuf {
     if let Some(p) = cli_path {
         let path = PathBuf::from(p);
         return make_absolute(&path);
     }
 
-    // Walk up directory tree looking for barrel.yaml
+    // Walk up directory tree looking for AXEL.md
     let mut current = std::env::current_dir().unwrap_or_default();
     loop {
-        let candidate = current.join("barrel.yaml");
-        if candidate.exists() {
-            return candidate; // Already absolute since current is from current_dir()
+        let md_candidate = current.join("AXEL.md");
+        if md_candidate.exists() {
+            return md_candidate;
         }
 
         match current.parent() {
@@ -248,7 +261,7 @@ fn resolve_manifest_path(cli_path: Option<&str>) -> PathBuf {
 
     std::env::current_dir()
         .unwrap_or_default()
-        .join("barrel.yaml")
+        .join("AXEL.md")
 }
 
 /// Get the base directory (parent of manifest) for resolving relative paths
@@ -278,15 +291,15 @@ pub fn display_path(path: &Path) -> String {
 // Workspace Commands
 // =============================================================================
 
-/// Initialize a barrel workspace in the current directory
+/// Initialize an axel workspace in the current directory
 fn init_workspace() -> Result<()> {
     use dialoguer::{Input, theme::ColorfulTheme};
 
     let current_dir = std::env::current_dir()?;
-    let config_path = current_dir.join("barrel.yaml");
+    let config_path = current_dir.join("AXEL.md");
 
     if config_path.exists() {
-        eprintln!("{}", "barrel.yaml already exists in this directory".red());
+        eprintln!("{}", "AXEL.md already exists in this directory".red());
         std::process::exit(1);
     }
 
@@ -343,13 +356,13 @@ description: Project documentation for AI assistants
         println!("{} {} agents/index.md", "✔".green(), "Created".dimmed());
     }
 
-    // Create barrel.yaml
-    let yaml_content = generate_config(&name, &current_dir.to_string_lossy());
-    std::fs::write(&config_path, yaml_content)?;
-    println!("{} {} barrel.yaml", "✔".green(), "Created".dimmed());
+    // Create AXEL.md
+    let config_content = generate_config(&name, &current_dir.to_string_lossy());
+    std::fs::write(&config_path, config_content)?;
+    println!("{} {} AXEL.md", "✔".green(), "Created".dimmed());
 
     println!();
-    println!("Launch with: {}", "barrel".blue());
+    println!("Launch with: {}", "axel".blue());
 
     Ok(())
 }
@@ -359,17 +372,17 @@ description: Project documentation for AI assistants
 /// This experimental command discovers agent files across the filesystem by:
 /// 1. Prompting for a directory to scan
 /// 2. Walking the directory tree (ignoring .gitignore) looking for known agent patterns
-/// 3. Copying found files to a staging directory (`~/.config/barrel/agents/.bootstrap-staging/`)
+/// 3. Copying found files to a staging directory (`~/.config/axel/agents/.bootstrap-staging/`)
 /// 4. Launching an AI assistant to consolidate and organize the agents
 ///
 /// The AI is given instructions to merge duplicates, create proper directory structures
 /// (`<name>/AGENT.md`), and clean up the staging directory when done.
 ///
-/// For more controlled imports, prefer `barrel agent import`.
+/// For more controlled imports, prefer `axel agent import`.
 fn bootstrap_agents() -> Result<()> {
     use std::os::unix::process::CommandExt;
 
-    use barrel_core::all_agent_patterns;
+    use axel_core::all_agent_patterns;
     use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
     use ignore::WalkBuilder;
 
@@ -474,7 +487,7 @@ fn bootstrap_agents() -> Result<()> {
 
     // Confirm consolidation
     let proceed = Confirm::with_theme(&theme)
-        .with_prompt("Consolidate these agents to ~/.config/barrel/agents?")
+        .with_prompt("Consolidate these agents to ~/.config/axel/agents?")
         .default(true)
         .interact()?;
 
@@ -484,7 +497,7 @@ fn bootstrap_agents() -> Result<()> {
     }
 
     // Copy agents to global directory
-    let global_agents_dir = home_dir()?.join(".config/barrel/agents");
+    let global_agents_dir = home_dir()?.join(".config/axel/agents");
     std::fs::create_dir_all(&global_agents_dir)?;
 
     let staging_dir = global_agents_dir.join(".bootstrap-staging");
@@ -505,7 +518,7 @@ fn bootstrap_agents() -> Result<()> {
 
     println!();
     println!(
-        "{} {} files to ~/.config/barrel/agents/.bootstrap-staging/",
+        "{} {} files to ~/.config/axel/agents/.bootstrap-staging/",
         "✔".green(),
         found_agents.len()
     );
@@ -584,33 +597,33 @@ Please consolidate and organize them into clean agents:
 // Setup Command
 // =============================================================================
 
-fn setup_barrel() -> Result<()> {
+fn setup_axel() -> Result<()> {
     use dialoguer::{Input, theme::ColorfulTheme};
 
     let theme = ColorfulTheme::default();
     let home = home_dir()?;
 
-    println!("{}", "Barrel Setup".blue().bold());
+    println!("{}", "Axel Setup".blue().bold());
     println!();
 
-    let global_dir = home.join(".barrel");
+    let global_dir = home.join(".axel");
     let global_agents = global_dir.join("agents");
 
     if !global_dir.exists() {
         std::fs::create_dir_all(&global_dir)?;
-        println!("{} {} ~/.barrel/", "✔".green(), "Created".dimmed());
+        println!("{} {} ~/.axel/", "✔".green(), "Created".dimmed());
     }
 
     if !global_agents.exists() {
         std::fs::create_dir_all(&global_agents)?;
-        println!("{} {} ~/.barrel/agents/", "✔".green(), "Created".dimmed());
+        println!("{} {} ~/.axel/agents/", "✔".green(), "Created".dimmed());
     }
 
-    let global_config = global_dir.join("barrel.yaml");
+    let global_config = global_dir.join("AXEL.md");
     if !global_config.exists() {
-        std::fs::write(&global_config, "# Global barrel configuration\n")?;
+        std::fs::write(&global_config, "---\n# Global axel configuration\n---\n")?;
         println!(
-            "{} {} ~/.barrel/barrel.yaml",
+            "{} {} ~/.axel/AXEL.md",
             "✔".green(),
             "Created".dimmed()
         );

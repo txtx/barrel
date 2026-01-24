@@ -1,0 +1,119 @@
+//! Claude settings.json generator for hook configuration.
+
+use std::path::Path;
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+
+/// Claude Code settings.json structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hooks: Option<HooksConfig>,
+}
+
+/// Hooks configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct HooksConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_tool_use: Option<Vec<HookMatcher>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_tool_use: Option<Vec<HookMatcher>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_start: Option<Vec<HookMatcher>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_end: Option<Vec<HookMatcher>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<Vec<HookMatcher>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent_stop: Option<Vec<HookMatcher>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_request: Option<Vec<HookMatcher>>,
+}
+
+/// Hook matcher configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookMatcher {
+    pub matcher: String,
+    pub hooks: Vec<Hook>,
+}
+
+/// Individual hook configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Hook {
+    #[serde(rename = "type")]
+    pub hook_type: String,
+    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u32>,
+}
+
+/// Generate Claude settings with hooks that POST events to the axel server
+pub fn generate_hooks_settings(port: u16, session_id: &str) -> ClaudeSettings {
+    let endpoint = format!("http://localhost:{}/events/{}", port, session_id);
+
+    // Create a curl command that reads from stdin and POSTs to the endpoint
+    let curl_command = format!(
+        "curl -s -X POST -H 'Content-Type: application/json' -d @- {}",
+        endpoint
+    );
+
+    let create_hook = |_event_type: &str| -> Vec<HookMatcher> {
+        vec![HookMatcher {
+            matcher: "*".to_string(),
+            hooks: vec![Hook {
+                hook_type: "command".to_string(),
+                command: curl_command.clone(),
+                timeout: Some(5),
+            }],
+        }]
+    };
+
+    ClaudeSettings {
+        hooks: Some(HooksConfig {
+            pre_tool_use: Some(create_hook("PreToolUse")),
+            post_tool_use: Some(create_hook("PostToolUse")),
+            session_start: Some(create_hook("SessionStart")),
+            session_end: Some(create_hook("SessionEnd")),
+            stop: Some(create_hook("Stop")),
+            subagent_stop: Some(create_hook("SubagentStop")),
+            permission_request: Some(create_hook("PermissionRequest")),
+        }),
+    }
+}
+
+/// Write the Claude settings to a file
+pub fn write_settings(settings: &ClaudeSettings, path: &Path) -> Result<()> {
+    // Ensure parent directory exists
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Check if there's an existing settings file
+    let final_settings = if path.exists() {
+        // Read existing settings
+        let content = std::fs::read_to_string(path)?;
+        let mut existing: serde_json::Value = serde_json::from_str(&content)?;
+
+        // Merge hooks into existing settings
+        if let Some(hooks) = &settings.hooks {
+            existing["hooks"] = serde_json::to_value(hooks)?;
+        }
+
+        existing
+    } else {
+        serde_json::to_value(settings)?
+    };
+
+    // Write the settings
+    let json = serde_json::to_string_pretty(&final_settings)?;
+    std::fs::write(path, json)?;
+
+    Ok(())
+}
+
+/// Get the path to the Claude settings file in a workspace
+pub fn settings_path(workspace_dir: &Path) -> std::path::PathBuf {
+    workspace_dir.join(".claude").join("settings.json")
+}

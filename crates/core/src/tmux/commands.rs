@@ -69,7 +69,7 @@ pub struct SessionInfo {
     pub created: u64,
     /// Whether clients are attached
     pub attached: bool,
-    /// Working directory (from barrel environment)
+    /// Working directory (from axel environment)
     pub working_dir: Option<String>,
 }
 
@@ -81,8 +81,8 @@ fn count_session_panes(session: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// List all tmux sessions (optionally filtered to barrel sessions only)
-pub fn list_sessions(barrel_only: bool) -> Result<Vec<SessionInfo>> {
+/// List all tmux sessions (optionally filtered to axel sessions only)
+pub fn list_sessions(axel_only: bool) -> Result<Vec<SessionInfo>> {
     let output = tmux(&[
         "list-sessions",
         "-F",
@@ -102,10 +102,10 @@ pub fn list_sessions(barrel_only: bool) -> Result<Vec<SessionInfo>> {
         if parts.len() >= 4 {
             let name = parts[0].to_string();
 
-            // Check if this is a barrel session by looking for BARREL_MANIFEST env var
-            let manifest = get_environment(&name, "BARREL_MANIFEST");
+            // Check if this is an axel session by looking for AXEL_MANIFEST env var
+            let manifest = get_environment(&name, "AXEL_MANIFEST");
 
-            if barrel_only && manifest.is_none() {
+            if axel_only && manifest.is_none() {
                 continue;
             }
 

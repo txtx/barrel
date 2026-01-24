@@ -1,4 +1,4 @@
-//! Session management commands for barrel.
+//! Session management commands for axel.
 //!
 //! This module handles tmux session lifecycle:
 //! - Listing running sessions
@@ -8,13 +8,13 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use barrel_core::{
+use axel_core::{
     ClaudeDriver, ProfileType, ShellConfig,
     claude::ClaudeCommand,
     config::{expand_path, load_config},
     drivers, git,
     tmux::{
-        BARREL_MANIFEST_ENV, attach_session, create_workspace as tmux_create_workspace,
+        AXEL_MANIFEST_ENV, attach_session, create_workspace as tmux_create_workspace,
         detach_session, get_environment, has_session, kill_session, list_sessions,
     },
 };
@@ -31,14 +31,14 @@ use crate::{
 
 /// List running tmux sessions.
 ///
-/// If `barrel_only` is true, only shows sessions created by barrel
-/// (identified by the BARREL_MANIFEST environment variable).
-pub fn do_list_sessions(barrel_only: bool) -> Result<()> {
-    let sessions = list_sessions(barrel_only)?;
+/// If `axel_only` is true, only shows sessions created by axel
+/// (identified by the AXEL_MANIFEST environment variable).
+pub fn do_list_sessions(axel_only: bool) -> Result<()> {
+    let sessions = list_sessions(axel_only)?;
 
     if sessions.is_empty() {
-        if barrel_only {
-            println!("{}", "No barrel sessions running".dimmed());
+        if axel_only {
+            println!("{}", "No axel sessions running".dimmed());
         } else {
             println!("{}", "No tmux sessions running".dimmed());
         }
@@ -116,9 +116,9 @@ pub fn do_kill_workspace(
     // Skip agent cleanup for worktree sessions - the worktree directory
     // may be pruned anyway, and we don't want to accidentally clean the main repo
     let cleaned = if !keep_agents && worktree_branch.is_none() {
-        let session_manifest = get_environment(name, BARREL_MANIFEST_ENV).map(PathBuf::from);
-        let config_path = workspaces_dir.join(name).join("barrel.yaml");
-        let local_config = std::env::current_dir().ok().map(|d| d.join("barrel.yaml"));
+        let session_manifest = get_environment(name, AXEL_MANIFEST_ENV).map(PathBuf::from);
+        let config_path = workspaces_dir.join(name).join("AXEL.md");
+        let local_config = std::env::current_dir().ok().map(|d| d.join("AXEL.md"));
 
         let cfg = session_manifest
             .and_then(|p| load_config(&p).ok())
@@ -185,7 +185,7 @@ pub fn do_kill_workspace(
 
 /// Launch a workspace from a manifest file.
 ///
-/// This is the main launch path when running `barrel` with a `barrel.yaml` present.
+/// This is the main launch path when running `axel` with an `AXEL.md` present.
 pub fn launch_from_manifest(config_path: &Path, profile: Option<&str>) -> Result<()> {
     if !config_path.exists() {
         eprintln!(
@@ -208,7 +208,7 @@ pub fn launch_from_manifest(config_path: &Path, profile: Option<&str>) -> Result
         // Check if this session belongs to a different workspace
         let current_manifest = config_path.to_path_buf();
 
-        if let Some(existing_manifest) = get_environment(&session_name, BARREL_MANIFEST_ENV) {
+        if let Some(existing_manifest) = get_environment(&session_name, AXEL_MANIFEST_ENV) {
             let existing_path = PathBuf::from(&existing_manifest);
             if existing_path != current_manifest {
                 eprintln!(
@@ -229,7 +229,7 @@ pub fn launch_from_manifest(config_path: &Path, profile: Option<&str>) -> Result
                 eprintln!();
                 eprintln!(
                     "{}",
-                    "To fix this, update the 'workspace' field in your barrel.yaml to use a unique name.".yellow()
+                    "To fix this, update the 'workspace' field in your AXEL.md to use a unique name.".yellow()
                 );
                 std::process::exit(1);
             }
@@ -258,7 +258,7 @@ pub fn launch_from_manifest(config_path: &Path, profile: Option<&str>) -> Result
 }
 
 /// Launch in shell mode (no tmux, just run the first shell).
-fn launch_shell_mode(config: &barrel_core::WorkspaceConfig, profile: Option<&str>) -> Result<()> {
+fn launch_shell_mode(config: &axel_core::WorkspaceConfig, profile: Option<&str>) -> Result<()> {
     use std::os::unix::process::CommandExt;
 
     let panes = config.resolve_panes(profile);
@@ -316,7 +316,7 @@ fn launch_shell_mode(config: &barrel_core::WorkspaceConfig, profile: Option<&str
         }
     }
 
-    let command = build_shell_command(&first_pane.config, index.as_ref());
+    let command = build_shell_command(&first_pane.config, index.as_ref(), None);
 
     if let Some(ref dir) = work_dir {
         std::env::set_current_dir(dir)?;
@@ -333,7 +333,11 @@ fn launch_shell_mode(config: &barrel_core::WorkspaceConfig, profile: Option<&str
 }
 
 /// Launch a specific shell by name from the manifest.
-pub fn launch_shell_by_name(manifest_path: &Path, shell_name: &str) -> Result<()> {
+pub fn launch_shell_by_name(
+    manifest_path: &Path,
+    shell_name: &str,
+    prompt_override: Option<&str>,
+) -> Result<()> {
     let config = load_config(manifest_path)?;
     let index = config.load_index();
 
@@ -397,7 +401,7 @@ pub fn launch_shell_by_name(manifest_path: &Path, shell_name: &str) -> Result<()
         }
     }
 
-    let command = build_shell_command(shell_config, index.as_ref());
+    let command = build_shell_command(shell_config, index.as_ref(), prompt_override);
 
     let status = if let Some(cmd) = command {
         std::process::Command::new("sh")
@@ -429,7 +433,7 @@ pub fn launch_shell_by_name(manifest_path: &Path, shell_name: &str) -> Result<()
 /// Launch in tmux control mode (-CC) for iTerm2 integration.
 fn launch_tmux_cc_mode(
     config_path: &Path,
-    config: &barrel_core::WorkspaceConfig,
+    config: &axel_core::WorkspaceConfig,
     profile: Option<&str>,
 ) -> Result<()> {
     let session_name = config_path
@@ -465,7 +469,7 @@ fn launch_tmux_cc_mode(
 }
 
 /// Launch in standard tmux mode.
-fn launch_tmux_mode(config: &barrel_core::WorkspaceConfig, profile: Option<&str>) -> Result<()> {
+fn launch_tmux_mode(config: &axel_core::WorkspaceConfig, profile: Option<&str>) -> Result<()> {
     let session_name = config
         .manifest_path
         .as_ref()
@@ -500,9 +504,13 @@ fn launch_tmux_mode(config: &barrel_core::WorkspaceConfig, profile: Option<&str>
 // =============================================================================
 
 /// Build the shell command string for a given shell config.
+///
+/// If `prompt_override` is provided, it takes precedence over the prompt
+/// defined in the shell config or the workspace index.
 fn build_shell_command(
     shell_config: &ShellConfig,
-    index: Option<&barrel_core::WorkspaceIndex>,
+    index: Option<&axel_core::WorkspaceIndex>,
+    prompt_override: Option<&str>,
 ) -> Option<String> {
     match shell_config {
         ShellConfig::Claude(c) => {
@@ -516,7 +524,7 @@ fn build_shell_command(
             if !c.disallowed_tools.is_empty() {
                 cmd = cmd.disallowed_tools(c.disallowed_tools.clone());
             }
-            if let Some(prompt) = &c.prompt {
+            if let Some(prompt) = prompt_override.or(c.prompt.as_deref()) {
                 cmd = cmd.prompt(prompt);
             }
             for arg in &c.args {
@@ -533,7 +541,7 @@ fn build_shell_command(
             for arg in &c.args {
                 parts.push(arg.clone());
             }
-            if let Some(prompt) = &c.prompt {
+            if let Some(prompt) = prompt_override.or(c.prompt.as_deref()) {
                 let escaped = prompt.replace('\'', "'\\''");
                 parts.push(format!("'{}'", escaped));
             } else if let Some(idx) = index {
@@ -551,7 +559,7 @@ fn build_shell_command(
             for arg in &c.args {
                 parts.push(arg.clone());
             }
-            if let Some(prompt) = &c.prompt {
+            if let Some(prompt) = prompt_override.or(c.prompt.as_deref()) {
                 let escaped = prompt.replace('\'', "'\\''");
                 parts.push(format!("'{}'", escaped));
             } else if let Some(idx) = index {
@@ -569,7 +577,7 @@ fn build_shell_command(
             for arg in &c.args {
                 parts.push(arg.clone());
             }
-            if let Some(prompt) = &c.prompt {
+            if let Some(prompt) = prompt_override.or(c.prompt.as_deref()) {
                 let escaped = prompt.replace('\'', "'\\''");
                 parts.push(format!("'{}'", escaped));
             } else if let Some(idx) = index {

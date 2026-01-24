@@ -24,11 +24,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
-name = "barrel-cli"
+name = "axel-cli"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "barrel-core",
+ "axel-core",
  "clap",
  "colored",
  "comfy-table",
@@ -38,7 +38,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "barrel-core"
+name = "axel-core"
 version = "0.2.0"
 dependencies = [
  "anyhow",

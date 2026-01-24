@@ -1,6 +1,6 @@
-//! Barrel Core - Core library for the barrel workspace launcher
+//! Axel Core - Core library for the axel workspace launcher
 //!
-//! This crate provides the core functionality for barrel including:
+//! This crate provides the core functionality for axel including:
 //! - Configuration parsing and types
 //! - Tmux session management
 //! - Agent driver implementations

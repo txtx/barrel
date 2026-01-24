@@ -1,19 +1,19 @@
 #!/bin/bash
 #
-# Barrel installer script
+# Axel installer script
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/txtx/barrel/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/txtx/axel/main/scripts/install.sh | bash
 #
 # Options:
-#   BARREL_VERSION=v0.1.0  Install a specific version
-#   BARREL_INSTALL_DIR=~/.local/bin  Install to a specific directory
+#   AXEL_VERSION=v0.1.0  Install a specific version
+#   AXEL_INSTALL_DIR=~/.local/bin  Install to a specific directory
 #
 
 set -euo pipefail
 
-REPO="txtx/barrel"
-BINARY_NAME="barrel"
+REPO="txtx/axel"
+BINARY_NAME="axel"
 
 # Colors
 RED='\033[0;31m'
@@ -55,8 +55,8 @@ main() {
     local platform version install_dir tmp_dir
 
     platform=$(detect_platform)
-    version="${BARREL_VERSION:-$(get_latest_version)}"
-    install_dir="${BARREL_INSTALL_DIR:-${HOME}/.local/bin}"
+    version="${AXEL_VERSION:-$(get_latest_version)}"
+    install_dir="${AXEL_INSTALL_DIR:-${HOME}/.local/bin}"
     tmp_dir=$(mktemp -d)
 
     info "Installing ${BINARY_NAME} ${version} for ${platform}..."

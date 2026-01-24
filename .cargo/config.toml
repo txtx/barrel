@@ -1,2 +1,2 @@
 [alias]
-barrel-install = "install --path crates/cli --locked --force"
+axel-install = "install --path crates/cli --locked --force"

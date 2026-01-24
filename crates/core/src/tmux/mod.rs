@@ -1,4 +1,4 @@
-//! Tmux session management for barrel workspaces.
+//! Tmux session management for axel workspaces.
 //!
 //! This module provides utilities for creating and managing tmux sessions,
 //! including session creation, pane layout, and workspace configuration.
@@ -6,7 +6,7 @@
 //! # Submodules
 //!
 //! - [`commands`]: Low-level tmux command builders (NewSession, SplitWindow, etc.)
-//! - [`session`]: High-level workspace creation from barrel configuration
+//! - [`session`]: High-level workspace creation from axel configuration
 //!
 //! # Usage
 //!
@@ -15,7 +15,7 @@
 //! tmux session with the specified pane layout and AI shells.
 //!
 //! ```ignore
-//! use barrel_core::tmux::create_workspace;
+//! use axel_core::tmux::create_workspace;
 //!
 //! create_workspace("my-project", &config, Some("default"))?;
 //! attach_session("my-project")?;

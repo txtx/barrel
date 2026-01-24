@@ -1,6 +1,6 @@
-//! Configuration types and parsing for barrel workspaces
+//! Configuration types and parsing for axel workspaces
 //!
-//! This module provides the core configuration types for barrel workspaces,
+//! This module provides the core configuration types for axel workspaces,
 //! including workspace configuration, shell definitions, terminal profiles,
 //! and agent management.
 
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 // Workspace Configuration
 // =============================================================================
 
-/// Main workspace configuration loaded from barrel.yaml
+/// Main workspace configuration loaded from AXEL.md (YAML frontmatter)
 #[derive(Debug, Deserialize)]
 pub struct WorkspaceConfig {
     /// Workspace name (used as tmux session name)
@@ -845,24 +845,35 @@ pub fn workspaces_dir() -> PathBuf {
     PathBuf::from("/Users/ludovic/Coding/barrel/workspaces")
 }
 
-/// Load workspace configuration from a file
+/// Extract YAML frontmatter from a markdown file.
+/// Frontmatter is delimited by `---` at the start of the file.
+fn extract_frontmatter(content: &str) -> Result<&str> {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with("---") {
+        anyhow::bail!("No frontmatter found: file must start with ---");
+    }
+    let after_opening = &trimmed[3..];
+    let after_opening = after_opening.strip_prefix('\n').unwrap_or(after_opening);
+    match after_opening.find("\n---") {
+        Some(end) => Ok(&after_opening[..end]),
+        None => anyhow::bail!("No closing --- found for frontmatter"),
+    }
+}
+
+/// Load workspace configuration from a file.
+/// Parses YAML from markdown frontmatter.
 pub fn load_config(path: &Path) -> Result<WorkspaceConfig> {
     let content = std::fs::read_to_string(path)?;
-    let mut config: WorkspaceConfig = serde_yaml::from_str(&content)?;
+    let yaml = extract_frontmatter(&content)?;
+    let mut config: WorkspaceConfig = serde_yaml::from_str(yaml)?;
     config.manifest_path = Some(path.to_path_buf());
     Ok(config)
 }
 
-/// Generate a new workspace configuration
+/// Generate a new workspace configuration as a markdown file with YAML frontmatter
 pub fn generate_config(workspace: &str, _workspace_path: &str) -> String {
     format!(
-        r#"# Barrel workspace configuration
-# Documentation: https://docs.barrel.rs
-#
-# Launch with: barrel
-# Launch with profile: barrel --profile <name>
-# Kill session: barrel -k {workspace}
-
+        r#"---
 workspace: {workspace}
 
 # =============================================================================
@@ -873,7 +884,7 @@ workspace: {workspace}
 
 agents:
   - path: ./agents
-  - path: ~/.config/barrel/agents
+  - path: ~/.config/axel/agents
 
 # =============================================================================
 # Shell definitions
@@ -915,7 +926,7 @@ shells:
   # Regular shell with notes displayed on startup
   - type: shell
     notes:
-      - "$ barrel -k {workspace}"
+      - "$ axel -k {workspace}"
 
   # Custom command example
   # - type: logs
@@ -975,6 +986,17 @@ terminal:
     #     col: 2
     #     row: 0
     #     width: 20
+---
+
+# {workspace}
+
+Axel workspace configuration. The YAML frontmatter above defines the workspace layout.
+
+- Launch: `axel`
+- Launch with profile: `axel --profile <name>`
+- Kill session: `axel -k {workspace}`
+
+See [docs.axel.md](https://docs.axel.md) for full configuration reference.
 "#,
         workspace = workspace,
     )
@@ -1076,7 +1098,7 @@ You are a specialized agent."#;
 
     #[test]
     fn test_agent_dir_structure() {
-        let temp_dir = std::env::temp_dir().join("barrel-test-agents");
+        let temp_dir = std::env::temp_dir().join("axel-test-agents");
         let agent_dir = temp_dir.join("my-agent");
         std::fs::create_dir_all(&agent_dir).ok();
 

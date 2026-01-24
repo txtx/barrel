@@ -1,6 +1,6 @@
 [package]
-name = "barrel-cli"
-description = "Barrel is a tmux workspace launcher"
+name = "axel-cli"
+description = "Axel is a tmux workspace launcher"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
@@ -9,11 +9,11 @@ keywords = { workspace = true }
 categories = { workspace = true }
 
 [[bin]]
-name = "barrel"
+name = "axel"
 path = "src/main.rs"
 
 [dependencies]
-barrel-core = { workspace = true }
+axel-core = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["derive", "env"] }
 colored = { workspace = true }

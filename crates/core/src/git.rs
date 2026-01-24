@@ -1,13 +1,13 @@
-//! Git integration for barrel workspaces.
+//! Git integration for axel workspaces.
 //!
-//! This module provides git worktree management, allowing barrel to create
+//! This module provides git worktree management, allowing axel to create
 //! isolated working directories for different branches.
 //!
 //! # Worktree Workflow
 //!
 //! ```bash
-//! barrel -w feat/auth    # Create worktree + launch workspace
-//! barrel -w feat/auth -k # Kill workspace + optionally prune worktree
+//! axel -w feat/auth    # Create worktree + launch workspace
+//! axel -w feat/auth -k # Kill workspace + optionally prune worktree
 //! ```
 //!
 //! Worktrees are created as siblings to the main repository:
@@ -289,9 +289,9 @@ pub fn ensure_worktree(path: &Path, branch: &str) -> Result<WorktreeInfo> {
         }
     }
 
-    // Symlink barrel.yaml if it exists in main repo but not in worktree
-    let main_manifest = repo_root.join("barrel.yaml");
-    let worktree_manifest = worktree_path.join("barrel.yaml");
+    // Symlink AXEL.md if it exists in main repo but not in worktree
+    let main_manifest = repo_root.join("AXEL.md");
+    let worktree_manifest = worktree_path.join("AXEL.md");
     if main_manifest.exists() && !worktree_manifest.exists() {
         #[cfg(unix)]
         {

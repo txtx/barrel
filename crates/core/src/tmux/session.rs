@@ -2,7 +2,7 @@
 //!
 //! This module provides high-level workspace creation using tmux sessions.
 //! It handles the complex layout algorithm for arranging panes in a grid,
-//! installing agents for each AI tool, and configuring tmux with barrel styling.
+//! installing agents for each AI tool, and configuring tmux with axel styling.
 //!
 //! # Layout Algorithm
 //!
@@ -71,16 +71,16 @@ const KEY_WHEEL_UP: &str = "WheelUpPane";
 const KEY_WHEEL_DOWN: &str = "WheelDownPane";
 
 // =============================================================================
-// Barrel-specific constants
+// Axel-specific constants
 // =============================================================================
 
-/// Barrel accent color (blue)
-const BARREL_COLOR: &str = "#85A2FF";
+/// Axel accent color (blue)
+const AXEL_COLOR: &str = "#85A2FF";
 /// Pane border format template
 const PANE_BORDER_FORMAT: &str = "#[align=centre] #{pane_title} ";
 
 /// Environment variable name for storing manifest path in tmux session
-pub const BARREL_MANIFEST_ENV: &str = "BARREL_MANIFEST";
+pub const AXEL_MANIFEST_ENV: &str = "AXEL_MANIFEST";
 
 /// Build the command string for an AI shell (Claude or OpenCode).
 ///
@@ -126,7 +126,7 @@ fn build_ai_command(
 /// Build the command string for Antigravity CLI.
 ///
 /// Antigravity is Google's AI coding assistant. It automatically discovers
-/// project rules from `.antigravity/rules.md` (where barrel installs agents).
+/// project rules from `.antigravity/rules.md` (where axel installs agents).
 ///
 /// The CLI interface supports:
 /// - `-m` for model selection
@@ -341,7 +341,7 @@ pub fn create_workspace(
     if let Some(manifest_path) = &config.manifest_path
         && let Some(path_str) = manifest_path.to_str()
     {
-        set_environment(session_name, BARREL_MANIFEST_ENV, path_str).ok();
+        set_environment(session_name, AXEL_MANIFEST_ENV, path_str).ok();
     }
 
     // Configure session options
@@ -386,13 +386,13 @@ pub fn create_workspace(
     SetOption::new()
         .target(session_name)
         .option(OPT_PANE_ACTIVE_BORDER_STYLE)
-        .value(&format!("fg={}", BARREL_COLOR))
+        .value(&format!("fg={}", AXEL_COLOR))
         .run()?;
 
     SetOption::new()
         .target(session_name)
         .option(OPT_STATUS_STYLE)
-        .value(&format!("bg={},fg=#000000", BARREL_COLOR))
+        .value(&format!("bg={},fg=#000000", AXEL_COLOR))
         .run()?;
 
     SetOption::new()
@@ -405,7 +405,7 @@ pub fn create_workspace(
     SetOption::new()
         .target(session_name)
         .option(OPT_STATUS_RIGHT)
-        .value(&format!(" barrel v{} ", env!("CARGO_PKG_VERSION")))
+        .value(&format!(" axel v{} ", env!("CARGO_PKG_VERSION")))
         .run()?;
 
     // Fix mouse behavior after copy
@@ -577,7 +577,7 @@ fn configure_pane(target: &str, pane: &ResolvedPane) -> Result<()> {
 /// This approach allows displaying startup information before the shell
 /// takes over, while keeping the pane in a clean state.
 fn create_wrapper_script(id: usize, pane: &ResolvedPane) -> Result<String> {
-    let wrapper_path = format!("/tmp/barrel_ws_{}", id);
+    let wrapper_path = format!("/tmp/axel_ws_{}", id);
     let mut file = std::fs::File::create(&wrapper_path)?;
 
     writeln!(file, "#!/bin/bash")?;

@@ -1,11 +1,12 @@
-# Barrel workspace configuration
-# Documentation: https://docs.barrel.rs
+---
+# Axel workspace configuration
+# Documentation: https://docs.axel.md
 #
-# Launch with: barrel
-# Launch with profile: barrel --profile <name>
-# Kill session: barrel -k barrel
+# Launch with: axel
+# Launch with profile: axel --profile <name>
+# Kill session: axel -k axel
 
-workspace: barrel
+workspace: axel
 
 # =============================================================================
 # Agent directories
@@ -15,7 +16,7 @@ workspace: barrel
 
 agents:
   - path: ./agents
-  - path: ~/.config/barrel/agents
+  - path: ~/.config/axel/agents
 
 # =============================================================================
 # Shell definitions
@@ -51,7 +52,7 @@ shells:
   # Regular shell with notes displayed on startup
   - type: shell
     notes:
-      - "$ barrel -k barrel"
+      - "$ axel -k axel"
 
   # Custom command example
   # - type: logs
@@ -111,3 +112,14 @@ terminal:
     #     col: 2
     #     row: 0
     #     width: 20
+---
+
+# axel
+
+Axel workspace configuration. The YAML frontmatter above defines the workspace layout.
+
+- Launch: `axel`
+- Launch with profile: `axel --profile <name>`
+- Kill session: `axel -k axel`
+
+See [docs.axel.md](https://docs.axel.md) for full configuration reference.

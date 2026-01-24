@@ -1,4 +1,4 @@
-//! Agent management commands for barrel.
+//! Agent management commands for axel.
 //!
 //! This module handles all agent-related operations:
 //! - Listing agents (local and global)
@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use barrel_core::{config::load_config, drivers};
+use axel_core::{config::load_config, drivers};
 use colored::Colorize;
 
 use crate::{display_path, home_dir};
@@ -22,7 +22,7 @@ use crate::{display_path, home_dir};
 
 const AGENT_FILE: &str = "AGENT.md";
 const AGENTS_DIR: &str = "agents";
-const BARREL_DIR: &str = "barrel";
+const AXEL_DIR: &str = "axel";
 const CONFIG_DIR: &str = ".config";
 
 // =============================================================================
@@ -32,7 +32,7 @@ const CONFIG_DIR: &str = ".config";
 fn global_agents_dir() -> Result<PathBuf> {
     Ok(home_dir()?
         .join(CONFIG_DIR)
-        .join(BARREL_DIR)
+        .join(AXEL_DIR)
         .join(AGENTS_DIR))
 }
 
@@ -40,7 +40,7 @@ fn global_agents_dir() -> Result<PathBuf> {
 ///
 /// Agents follow the convention `<base>/<name>/AGENT.md` where:
 /// - Local agents: `./agents/<name>/AGENT.md`
-/// - Global agents: `~/.config/barrel/agents/<name>/AGENT.md`
+/// - Global agents: `~/.config/axel/agents/<name>/AGENT.md`
 struct AgentPath {
     /// Directory containing the AGENT.md file
     dir: PathBuf,
@@ -487,7 +487,7 @@ fn import_single_agent(source_path: &Path) -> Result<()> {
     }
 
     // Create target directory in global agents
-    let global_agents_dir = home_dir()?.join(".config/barrel/agents");
+    let global_agents_dir = home_dir()?.join(".config/axel/agents");
     let target_dir = global_agents_dir.join(&agent_name);
     let target_file = target_dir.join("AGENT.md");
 
