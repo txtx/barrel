@@ -50,8 +50,8 @@ pub struct Hook {
 }
 
 /// Generate Claude settings with hooks that POST events to the axel server
-pub fn generate_hooks_settings(port: u16, session_id: &str) -> ClaudeSettings {
-    let endpoint = format!("http://localhost:{}/events/{}", port, session_id);
+pub fn generate_hooks_settings(port: u16, pane_id: &str) -> ClaudeSettings {
+    let endpoint = format!("http://localhost:{}/events/{}", port, pane_id);
 
     // Create a curl command that reads from stdin and POSTs to the endpoint
     let curl_command = format!(
@@ -81,6 +81,24 @@ pub fn generate_hooks_settings(port: u16, session_id: &str) -> ClaudeSettings {
             permission_request: Some(create_hook("PermissionRequest")),
         }),
     }
+}
+
+/// Get the OTEL exporter metrics endpoint URL with pane_id
+/// Returns the full URL for OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+pub fn otel_metrics_endpoint(port: u16, pane_id: &str) -> String {
+    format!("http://localhost:{}/v1/metrics/{}", port, pane_id)
+}
+
+/// Get the OTEL exporter traces endpoint URL with pane_id
+/// Returns the full URL for OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+pub fn otel_traces_endpoint(port: u16, pane_id: &str) -> String {
+    format!("http://localhost:{}/v1/traces/{}", port, pane_id)
+}
+
+/// Get the OTEL exporter logs endpoint URL with pane_id
+/// Returns the full URL for OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+pub fn otel_logs_endpoint(port: u16, pane_id: &str) -> String {
+    format!("http://localhost:{}/v1/logs/{}", port, pane_id)
 }
 
 /// Write the Claude settings to a file

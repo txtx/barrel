@@ -1,8 +1,8 @@
-//! Agent driver implementations
+//! Skill driver implementations
 //!
-//! This module provides the `AgentDriver` trait and implementations for various
+//! This module provides the `SkillDriver` trait and implementations for various
 //! AI coding tools (Claude Code, Codex, OpenCode, Antigravity). Drivers handle
-//! installing agent files in tool-specific formats.
+//! installing skill files in tool-specific formats.
 
 mod antigravity;
 mod claude;
@@ -17,34 +17,66 @@ pub use claude::ClaudeDriver;
 pub use codex::CodexDriver;
 pub use opencode::OpenCodeDriver;
 
-/// Trait for agent installation drivers
+use crate::config::WorkspaceConfig;
+
+/// Trait for skill installation drivers
 ///
-/// Each driver knows how to install agents for a specific tool (Claude Code, Codex, etc.)
-pub trait AgentDriver {
+/// Each driver knows how to install skills for a specific tool (Claude Code, Codex, etc.)
+pub trait SkillDriver {
     /// Driver name for display/config
     fn name(&self) -> &'static str;
 
-    /// Directory where agents should be installed (relative to workspace)
-    fn agents_dir(&self, workspace_dir: &Path) -> PathBuf;
+    /// Directory where skills should be installed (relative to workspace)
+    fn skills_dir(&self, workspace_dir: &Path) -> PathBuf;
 
-    /// File patterns used by this driver for agent discovery
+    /// File patterns used by this driver for skill discovery
     ///
-    /// Returns patterns like "CLAUDE.md", ".claude/agents/*.md", etc.
-    fn agent_patterns(&self) -> &'static [&'static str];
+    /// Returns patterns like "CLAUDE.md", ".claude/skills/*.md", etc.
+    fn skill_patterns(&self) -> &'static [&'static str];
 
-    /// Install agents to the target directory
+    /// Install skills to the target directory
     ///
-    /// Returns the number of agents installed.
-    fn install_agents(&self, workspace_dir: &Path, agent_paths: &[PathBuf]) -> Result<usize>;
+    /// Returns the number of skills installed.
+    fn install_skills(&self, workspace_dir: &Path, skill_paths: &[PathBuf]) -> Result<usize>;
 
-    /// Clean up installed agents from the workspace
+    /// Clean up installed skills from the workspace
     ///
     /// Returns true if any cleanup was performed.
     fn cleanup(&self, workspace_dir: &Path) -> bool;
+
+    /// Get environment variables for OpenTelemetry configuration.
+    ///
+    /// Returns a list of (key, value) pairs to set when launching the shell.
+    /// Default implementation returns empty vec (no OTEL support).
+    fn otel_env_vars(&self, _port: u16, _pane_id: &str) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
+    /// Whether this driver supports OpenTelemetry telemetry export.
+    fn supports_otel(&self) -> bool {
+        false
+    }
+
+    /// Install index file (e.g., CLAUDE.md, AGENTS.md) as symlink to AXEL.md.
+    ///
+    /// Each tool expects project context in a specific file:
+    /// - Claude Code: CLAUDE.md
+    /// - Codex: AGENTS.md
+    /// - OpenCode: OPENCODE.md
+    ///
+    /// Returns true if the symlink was created.
+    fn install_index(&self, _config: &WorkspaceConfig, _workspace_dir: &Path) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// The name of the index file this driver expects (e.g., "CLAUDE.md", "AGENTS.md").
+    fn index_filename(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 /// Get a driver by name
-pub fn get_driver(name: &str) -> Option<Box<dyn AgentDriver>> {
+pub fn get_driver(name: &str) -> Option<Box<dyn SkillDriver>> {
     match name {
         "claude" => Some(Box::new(ClaudeDriver)),
         "codex" => Some(Box::new(CodexDriver)),
@@ -55,7 +87,7 @@ pub fn get_driver(name: &str) -> Option<Box<dyn AgentDriver>> {
 }
 
 /// Get all available drivers
-pub fn all_drivers() -> Vec<Box<dyn AgentDriver>> {
+pub fn all_drivers() -> Vec<Box<dyn SkillDriver>> {
     vec![
         Box::new(ClaudeDriver),
         Box::new(CodexDriver),
@@ -64,13 +96,13 @@ pub fn all_drivers() -> Vec<Box<dyn AgentDriver>> {
     ]
 }
 
-/// Get all agent file patterns from all drivers
-pub fn all_agent_patterns() -> Vec<&'static str> {
+/// Get all skill file patterns from all drivers
+pub fn all_skill_patterns() -> Vec<&'static str> {
     let mut patterns = Vec::new();
-    // Also include generic agent patterns
-    patterns.extend_from_slice(&["agents/*.md", "agents/*/AGENT.md"]);
+    // Also include generic skill patterns
+    patterns.extend_from_slice(&["skills/*.md", "skills/*/SKILL.md"]);
     for driver in all_drivers() {
-        patterns.extend_from_slice(driver.agent_patterns());
+        patterns.extend_from_slice(driver.skill_patterns());
     }
     patterns
 }

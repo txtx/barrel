@@ -6,7 +6,7 @@
 //! - **Workspace mode**: Launch a full tmux workspace from `AXEL.md`
 //! - **Shell mode**: Launch a single shell (e.g., `axel claude`)
 //! - **Session management**: List, create, and kill tmux sessions
-//! - **Agent management**: Create, import, fork, link, and remove agents
+//! - **Skill management**: Create, import, fork, link, and remove skills
 //!
 //! # Examples
 //!
@@ -20,15 +20,17 @@
 //! axel session new        # Create a new session (same as axel)
 //! axel session join foo   # Attach to session "foo"
 //! axel session kill foo   # Kill session named "foo"
-//! axel agent list         # List available agents
-//! axel agent import ./    # Import agents from directory
+//! axel skill list         # List available skills
+//! axel skill import ./    # Import skills from directory
 //! ```
+
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
 /// Axel CLI - AI-assisted development workspace manager.
 ///
-/// Axel provides portable agents across LLMs (Claude Code, Codex, OpenCode)
+/// Axel provides portable skills across LLMs (Claude Code, Codex, OpenCode)
 /// and reproducible terminal workspaces via tmux.
 #[derive(Parser)]
 #[command(name = "axel")]
@@ -63,9 +65,9 @@ pub struct Cli {
     )]
     pub kill: Option<String>,
 
-    /// Keep generated agent files when killing (don't clean up symlinks)
-    #[arg(long = "keep-agents", requires = "kill")]
-    pub keep_agents: bool,
+    /// Keep generated skill files when killing (don't clean up symlinks)
+    #[arg(long = "keep-skills", requires = "kill")]
+    pub keep_skills: bool,
 
     /// Skip confirmation when killing a workspace
     #[arg(long = "confirm", requires = "kill")]
@@ -77,6 +79,13 @@ pub struct Cli {
     /// The pane ID can be a tmux pane identifier (e.g., %5) or target format.
     #[arg(long = "pane-id", value_name = "PANE")]
     pub pane_id: Option<String>,
+
+    /// Port for the axel event server (hooks and OTEL telemetry).
+    ///
+    /// When specified with --pane-id, configures Claude hooks and OTEL
+    /// endpoints to use this port instead of the default 4318.
+    #[arg(long = "port", value_name = "PORT")]
+    pub server_port: Option<u16>,
 
     /// Prompt text to send to the shell.
     ///
@@ -106,26 +115,26 @@ pub struct Cli {
 pub enum Commands {
     /// Initialize a axel workspace in the current directory.
     ///
-    /// Creates `AXEL.md` with a default configuration and an `agents/`
+    /// Creates `AXEL.md` with a default configuration and an `skills/`
     /// directory with an `index.md` template for project documentation.
     Init,
 
-    /// Scan for existing agents and consolidate them using AI.
+    /// Scan for existing skills and consolidate them using AI.
     ///
-    /// Discovers agent files across your filesystem (Claude, Codex, OpenCode formats)
-    /// and uses an AI assistant to merge and organize them into `~/.config/axel/agents/`.
-    /// This is experimental; prefer `axel agent import` for controlled imports.
+    /// Discovers skill files across your filesystem (Claude, Codex, OpenCode formats)
+    /// and uses an AI assistant to merge and organize them into `~/.config/axel/skills/`.
+    /// This is experimental; prefer `axel skill import` for controlled imports.
     Bootstrap,
 
-    /// Manage agents (create, import, fork, link, remove).
+    /// Manage skills (create, import, fork, link, remove).
     ///
-    /// Agents are markdown files with system prompts that axel automatically
+    /// Skills are markdown files with system prompts that axel automatically
     /// installs to each AI tool's expected location (symlinks for Claude/OpenCode,
     /// merged file for Codex).
-    #[command(visible_alias = "agents")]
-    Agent {
+    #[command(visible_alias = "skills")]
+    Skill {
         #[command(subcommand)]
-        action: AgentCommands,
+        action: SkillCommands,
     },
 
     /// Manage tmux sessions (list, create, kill).
@@ -137,64 +146,83 @@ pub enum Commands {
         #[command(subcommand)]
         action: SessionCommands,
     },
+
+    /// Run the axel event server.
+    ///
+    /// Starts an HTTP server that receives Claude Code hook events and OTEL
+    /// telemetry data. The server broadcasts events via SSE and logs them
+    /// to a JSONL file. Required for the Axel macOS app to receive events.
+    Server {
+        /// Port to listen on
+        #[arg(short, long, default_value = "4318")]
+        port: u16,
+
+        /// Tmux session name to monitor for auto-shutdown (optional)
+        #[arg(short, long)]
+        session: Option<String>,
+
+        /// Path to the JSONL log file
+        #[arg(short, long, default_value = ".axel/events.jsonl")]
+        log: PathBuf,
+    },
 }
 
-/// Agent management subcommands.
+/// Skill management subcommands.
 ///
-/// Agents can exist in two locations:
-/// - **Local**: `./agents/` in the current workspace (higher precedence)
-/// - **Global**: `~/.config/axel/agents/` (shared across workspaces)
+/// Skills can exist in two locations:
+/// - **Local**: `./skills/` in the current workspace (higher precedence)
+/// - **Global**: `~/.config/axel/skills/` (shared across workspaces)
 #[derive(Subcommand)]
-pub enum AgentCommands {
-    /// List all available agents (local and global).
+pub enum SkillCommands {
+    /// List all available skills (local and global).
     ///
-    /// Shows agent name, location, and description. Local agents override
-    /// global agents with the same name.
+    /// Shows skill name, location, and description. Local skills override
+    /// global skills with the same name.
     #[command(visible_alias = "ls")]
     List,
 
-    /// Create a new agent interactively.
+    /// Create a new skill interactively.
     ///
-    /// Prompts for location (local or global) and opens the new agent
+    /// Prompts for location (local or global) and opens the new skill
     /// file in your `$EDITOR`.
     New {
-        /// Name of the agent to create (prompted if not provided)
+        /// Name of the skill to create (prompted if not provided)
         name: Option<String>,
     },
 
-    /// Import agent file(s) to the global agents directory.
+    /// Import skill file(s) to the global skills directory.
     ///
-    /// Accepts a single `.md` file or a directory containing multiple agents.
-    /// Each agent is stored as `~/.config/axel/agents/<name>/AGENT.md`.
+    /// Accepts a single `.md` file or a directory containing multiple skills.
+    /// Each skill is stored as `~/.config/axel/skills/<name>/AGENT.md`.
     Import {
-        /// Path to the agent file or directory to import
+        /// Path to the skill file or directory to import
         path: String,
     },
 
-    /// Fork (copy) a global agent to the current workspace.
+    /// Fork (copy) a global skill to the current workspace.
     ///
-    /// Creates an independent copy in `./agents/<name>/AGENT.md` that you
+    /// Creates an independent copy in `./skills/<name>/AGENT.md` that you
     /// can modify without affecting the global version.
     Fork {
-        /// Name of the global agent to fork
+        /// Name of the global skill to fork
         name: String,
     },
 
-    /// Link (symlink) a global agent to the current workspace.
+    /// Link (symlink) a global skill to the current workspace.
     ///
-    /// Creates a symlink from `./agents/<name>/` to the global agent.
-    /// Changes to the global agent will be reflected in the workspace.
+    /// Creates a symlink from `./skills/<name>/` to the global skill.
+    /// Changes to the global skill will be reflected in the workspace.
     Link {
-        /// Name of the global agent to link
+        /// Name of the global skill to link
         name: String,
     },
 
-    /// Remove an agent.
+    /// Remove an skill.
     ///
-    /// If the agent exists in both local and global locations, prompts
+    /// If the skill exists in both local and global locations, prompts
     /// for which one to remove.
     Rm {
-        /// Name of the agent to remove
+        /// Name of the skill to remove
         name: String,
     },
 }
@@ -237,14 +265,14 @@ pub enum SessionCommands {
     /// Kill a running workspace session.
     ///
     /// Equivalent to `axel -k <name>`. Terminates all panes, closes the tmux
-    /// session, and cleans up agent symlinks.
+    /// session, and cleans up skill symlinks.
     Kill {
         /// Name of the session to kill (uses current session if omitted)
         name: Option<String>,
 
-        /// Keep agent symlinks instead of cleaning them up
+        /// Keep skill symlinks instead of cleaning them up
         #[arg(long)]
-        keep_agents: bool,
+        keep_skills: bool,
 
         /// Skip confirmation prompt
         #[arg(long = "confirm")]

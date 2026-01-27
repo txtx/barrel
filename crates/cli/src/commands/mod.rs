@@ -1,2 +1,3 @@
-pub mod agent;
+pub mod skill;
+pub mod server;
 pub mod session;

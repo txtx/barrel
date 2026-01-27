@@ -14,3 +14,10 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 indexmap = { workspace = true }
 dirs = { workspace = true }
+
+# Server dependencies
+axum = "0.8"
+tokio = { version = "1.43", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+chrono = { version = "0.4", features = ["serde"] }

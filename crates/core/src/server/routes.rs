@@ -1,5 +1,6 @@
 //! Axum route handlers for the event server.
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::process::Command;
 use std::sync::Arc;
@@ -16,7 +17,7 @@ use axum::{
     Router,
 };
 use futures_util::stream::Stream;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, RwLock};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
@@ -29,6 +30,8 @@ pub struct AppState {
     pub inbox_tx: broadcast::Sender<TimestampedEvent>,
     /// Tmux session name for sending responses back to Claude
     pub tmux_session: Option<String>,
+    /// Mapping from Claude session_id to pane_id (for correlating OTEL metrics)
+    pub session_to_pane: Arc<RwLock<HashMap<String, String>>>,
 }
 
 /// Build the router with all routes
@@ -38,6 +41,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/inbox", get(handle_inbox_sse))
         .route("/outbox", post(handle_outbox))
         .route("/events/{pane_id}", post(handle_hook_event))
+        // OTEL routes with pane_id for direct correlation
+        .route("/v1/metrics/{pane_id}", post(handle_otel_metrics_with_pane))
+        .route("/v1/traces/{pane_id}", post(handle_otel_traces_with_pane))
+        .route("/v1/logs/{pane_id}", post(handle_otel_logs_with_pane))
+        // Legacy OTEL routes without pane_id (fallback)
         .route("/v1/metrics", post(handle_otel_metrics))
         .route("/v1/traces", post(handle_otel_traces))
         .route("/v1/logs", post(handle_otel_logs))
@@ -81,6 +89,26 @@ async fn handle_hook_event(
         Ok(hook_event) => hook_event.event_type.to_string(),
         Err(_) => "unknown_hook".to_string(),
     };
+
+    // Extract session_id from payload and store mapping for OTEL correlation
+    if let Some(session_id) = payload.get("session_id").and_then(|v| v.as_str()) {
+        let mut mapping = state.session_to_pane.write().await;
+        mapping.insert(session_id.to_string(), pane_id.clone());
+        eprintln!(
+            "[hook] Registered session mapping: {} -> {}",
+            &session_id[..8.min(session_id.len())],
+            &pane_id[..8.min(pane_id.len())]
+        );
+    } else {
+        // Log what keys ARE in the payload for debugging
+        let keys: Vec<&str> = payload.as_object()
+            .map(|obj| obj.keys().map(|k| k.as_str()).collect())
+            .unwrap_or_default();
+        eprintln!(
+            "[hook] No session_id in payload. Keys: {:?}, event_type: {}",
+            keys, event_type
+        );
+    }
 
     let event = TimestampedEvent::new(event_type, pane_id, payload);
 
@@ -162,7 +190,34 @@ async fn handle_outbox(
     (StatusCode::OK, "OK")
 }
 
-/// Handle OTEL metrics
+/// Handle OTEL metrics with pane_id in URL
+async fn handle_otel_metrics_with_pane(
+    State(state): State<Arc<AppState>>,
+    Path(pane_id): Path<String>,
+    Json(payload): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    handle_otel_event_with_pane(state, OtelEventType::Metrics, pane_id, payload).await
+}
+
+/// Handle OTEL traces with pane_id in URL
+async fn handle_otel_traces_with_pane(
+    State(state): State<Arc<AppState>>,
+    Path(pane_id): Path<String>,
+    Json(payload): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    handle_otel_event_with_pane(state, OtelEventType::Traces, pane_id, payload).await
+}
+
+/// Handle OTEL logs with pane_id in URL
+async fn handle_otel_logs_with_pane(
+    State(state): State<Arc<AppState>>,
+    Path(pane_id): Path<String>,
+    Json(payload): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    handle_otel_event_with_pane(state, OtelEventType::Logs, pane_id, payload).await
+}
+
+/// Handle OTEL metrics (legacy, without pane_id)
 async fn handle_otel_metrics(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<serde_json::Value>,
@@ -170,7 +225,7 @@ async fn handle_otel_metrics(
     handle_otel_event(state, OtelEventType::Metrics, payload).await
 }
 
-/// Handle OTEL traces
+/// Handle OTEL traces (legacy, without pane_id)
 async fn handle_otel_traces(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<serde_json::Value>,
@@ -178,12 +233,38 @@ async fn handle_otel_traces(
     handle_otel_event(state, OtelEventType::Traces, payload).await
 }
 
-/// Handle OTEL logs
+/// Handle OTEL logs (legacy, without pane_id)
 async fn handle_otel_logs(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     handle_otel_event(state, OtelEventType::Logs, payload).await
+}
+
+/// OTEL handler with pane_id directly from URL
+async fn handle_otel_event_with_pane(
+    state: Arc<AppState>,
+    event_type: OtelEventType,
+    pane_id: String,
+    payload: serde_json::Value,
+) -> impl IntoResponse {
+    eprintln!(
+        "[otel] Received {} with pane_id from URL: {}",
+        event_type,
+        &pane_id[..8.min(pane_id.len())]
+    );
+
+    let event = TimestampedEvent::new(event_type.to_string(), pane_id, payload);
+
+    // Send to file logger
+    if state.event_tx.send(event.clone()).await.is_err() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to log event");
+    }
+
+    // Broadcast to SSE subscribers
+    let _ = state.inbox_tx.send(event);
+
+    (StatusCode::OK, "OK")
 }
 
 /// Common handler for OTEL events
@@ -192,8 +273,32 @@ async fn handle_otel_event(
     event_type: OtelEventType,
     payload: serde_json::Value,
 ) -> impl IntoResponse {
-    // OTEL events use "otel" as the pane_id since they're not associated with a specific terminal
-    let event = TimestampedEvent::new(event_type.to_string(), "otel", payload);
+    // Try to extract session.id from OTEL payload to find the corresponding pane_id
+    let session_id_opt = extract_otel_session_id(&payload);
+
+    let pane_id = if let Some(ref session_id) = session_id_opt {
+        let mapping = state.session_to_pane.blocking_read();
+        if let Some(pane) = mapping.get(session_id) {
+            eprintln!(
+                "[otel] Found pane mapping for session {}: {}",
+                &session_id[..8.min(session_id.len())],
+                &pane[..8.min(pane.len())]
+            );
+            pane.clone()
+        } else {
+            eprintln!(
+                "[otel] No pane mapping for session {}. Registered sessions: {:?}",
+                &session_id[..8.min(session_id.len())],
+                mapping.keys().map(|k| &k[..8.min(k.len())]).collect::<Vec<_>>()
+            );
+            "otel".to_string()
+        }
+    } else {
+        eprintln!("[otel] Could not extract session.id from payload");
+        "otel".to_string()
+    };
+
+    let event = TimestampedEvent::new(event_type.to_string(), pane_id, payload);
 
     // Send to file logger
     if state.event_tx.send(event.clone()).await.is_err() {
@@ -204,4 +309,40 @@ async fn handle_otel_event(
     let _ = state.inbox_tx.send(event);
 
     (StatusCode::OK, "OK")
+}
+
+/// Extract session.id from OTEL metrics payload
+fn extract_otel_session_id(payload: &serde_json::Value) -> Option<String> {
+    // OTEL metrics structure: resourceMetrics[].scopeMetrics[].metrics[].sum.dataPoints[].attributes[]
+    // We need to find attributes with key="session.id"
+    let resource_metrics = payload.get("resourceMetrics")?.as_array()?;
+
+    for rm in resource_metrics {
+        let scope_metrics = rm.get("scopeMetrics")?.as_array()?;
+        for sm in scope_metrics {
+            let metrics = sm.get("metrics")?.as_array()?;
+            for metric in metrics {
+                if let Some(sum) = metric.get("sum") {
+                    if let Some(data_points) = sum.get("dataPoints").and_then(|d| d.as_array()) {
+                        for dp in data_points {
+                            if let Some(attributes) = dp.get("attributes").and_then(|a| a.as_array())
+                            {
+                                for attr in attributes {
+                                    if attr.get("key").and_then(|k| k.as_str()) == Some("session.id")
+                                    {
+                                        if let Some(value) = attr.get("value") {
+                                            if let Some(s) = value.get("stringValue").and_then(|v| v.as_str()) {
+                                                return Some(s.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }

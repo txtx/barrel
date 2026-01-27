@@ -1,14 +1,14 @@
 //! Axel CLI - AI-assisted development workspace manager.
 //!
-//! Axel provides portable agents across LLMs (Claude Code, Codex, OpenCode) and
-//! reproducible terminal workspaces via tmux. Write agents once and use them with
+//! Axel provides portable skills across LLMs (Claude Code, Codex, OpenCode) and
+//! reproducible terminal workspaces via tmux. Write skills once and use them with
 //! any supported AI assistant.
 //!
 //! # Architecture
 //!
 //! The CLI is organized into modules:
 //! - **cli**: Command-line argument definitions (clap)
-//! - **agent**: Agent management commands (list, new, import, fork, link, rm)
+//! - **skill**: Skill management commands (list, new, import, fork, link, rm)
 //! - **session**: Session management commands (list, new, join, kill, launch)
 //!
 //! # Workflow
@@ -16,7 +16,7 @@
 //! 1. User runs `axel` in a project directory
 //! 2. CLI finds `AXEL.md` by walking up the directory tree
 //! 3. Profile type determines launch mode (tmux, iTerm2, or single shell)
-//! 4. Agents are installed via drivers (symlinks for Claude/OpenCode, merged for Codex)
+//! 4. Skills are installed via drivers (symlinks for Claude/OpenCode, merged for Codex)
 //! 5. Tmux session is created with configured panes, or shell is exec'd directly
 //!
 //! Core functionality (config parsing, drivers, tmux commands) is in `axel-core`.
@@ -33,10 +33,10 @@ use axel_core::{
     tmux::{attach_session, current_session, has_session},
 };
 use clap::{CommandFactory, Parser};
-use cli::{AgentCommands, Cli, Commands, SessionCommands};
+use cli::{SkillCommands, Cli, Commands, SessionCommands};
 use colored::Colorize;
 use commands::{
-    agent::{fork_agent, import_agent, link_agent, list_agents, new_agent, rm_agent},
+    skill::{fork_skill, import_skill, link_skill, list_skills, new_skill, rm_skill},
     session::{do_kill_workspace, do_list_sessions, launch_from_manifest, launch_shell_by_name},
 };
 
@@ -48,7 +48,7 @@ use commands::{
 ///
 /// Parses command-line arguments and dispatches to the appropriate handler:
 ///
-/// - **Subcommands** (`init`, `bootstrap`, `agent`): Handled first
+/// - **Subcommands** (`init`, `bootstrap`, `skill`): Handled first
 /// - **Flags** (`-k`): Kill workspace
 /// - **Shell name**: Launch specific shell from manifest (e.g., `axel claude`)
 /// - **No args**: Launch full workspace from `AXEL.md` or show help
@@ -114,20 +114,20 @@ fn main() -> Result<()> {
     if let Some(command) = cli.command {
         return match command {
             Commands::Init => init_workspace(),
-            Commands::Bootstrap => bootstrap_agents(),
-            Commands::Agent { action } => match action {
-                AgentCommands::List => list_agents(&manifest_path, &base_dir),
-                AgentCommands::New { name } => new_agent(name.as_deref(), &base_dir),
-                AgentCommands::Import { path } => import_agent(&path),
-                AgentCommands::Fork { name } => fork_agent(&name, &manifest_path, &base_dir),
-                AgentCommands::Link { name } => link_agent(&name, &manifest_path, &base_dir),
-                AgentCommands::Rm { name } => rm_agent(&name, &manifest_path, &base_dir),
+            Commands::Bootstrap => bootstrap_skills(),
+            Commands::Skill { action } => match action {
+                SkillCommands::List => list_skills(&manifest_path, &base_dir),
+                SkillCommands::New { name } => new_skill(name.as_deref(), &base_dir),
+                SkillCommands::Import { path } => import_skill(&path),
+                SkillCommands::Fork { name } => fork_skill(&name, &manifest_path, &base_dir),
+                SkillCommands::Link { name } => link_skill(&name, &manifest_path, &base_dir),
+                SkillCommands::Rm { name } => rm_skill(&name, &manifest_path, &base_dir),
             },
             Commands::Session { action } => match action {
                 SessionCommands::List { all } => do_list_sessions(!all),
                 SessionCommands::New { shell } => {
                     if let Some(name) = shell {
-                        launch_shell_by_name(&manifest_path, &name, None)
+                        launch_shell_by_name(&manifest_path, &name, None, None, None)
                     } else {
                         launch_from_manifest(&manifest_path, cli.profile.as_deref())
                     }
@@ -143,7 +143,7 @@ fn main() -> Result<()> {
                 }
                 SessionCommands::Kill {
                     name,
-                    keep_agents,
+                    keep_skills,
                     confirm,
                 } => {
                     let session_name = match name {
@@ -157,13 +157,24 @@ fn main() -> Result<()> {
                     do_kill_workspace(
                         &workspaces_dir,
                         &session_name,
-                        keep_agents,
+                        keep_skills,
                         false,
                         None,
                         confirm,
                     )
                 }
             },
+            Commands::Server { port, session, log } => {
+                // Run the server in async context
+                let rt = tokio::runtime::Runtime::new()?;
+                rt.block_on(async {
+                    commands::server::run(commands::server::ServerArgs {
+                        port,
+                        session,
+                        log,
+                    }).await
+                })
+            }
         };
     }
 
@@ -194,7 +205,7 @@ fn main() -> Result<()> {
         do_kill_workspace(
             &workspaces_dir,
             &session_name,
-            cli.keep_agents,
+            cli.keep_skills,
             cli.prune_worktree,
             cli.worktree.as_deref(),
             cli.confirm,
@@ -203,7 +214,7 @@ fn main() -> Result<()> {
         if name == "setup" {
             setup_axel()?;
         } else if manifest_path.exists() {
-            launch_shell_by_name(&manifest_path, name, cli.prompt.as_deref())?;
+            launch_shell_by_name(&manifest_path, name, cli.prompt.as_deref(), cli.pane_id.as_deref(), cli.server_port)?;
         } else {
             eprintln!(
                 "{} No AXEL.md found. Run '{}' to create one.",
@@ -316,47 +327,7 @@ fn init_workspace() -> Result<()> {
         .default(default_name)
         .interact_text()?;
 
-    // Create agents directory
-    let agents_dir = current_dir.join("agents");
-    if !agents_dir.exists() {
-        std::fs::create_dir_all(&agents_dir)?;
-        println!("{} {} agents/", "✔".green(), "Created".dimmed());
-    }
-
-    // Create index.md template
-    let index_path = agents_dir.join("index.md");
-    if !index_path.exists() {
-        let index_content = format!(
-            r#"---
-name: {name}
-description: Project documentation for AI assistants
----
-
-# {name}
-
-## Overview
-
-<!-- Brief description of what this project does -->
-
-## Getting Started
-
-<!-- How to set up and run the project -->
-
-## Architecture
-
-<!-- High-level architecture overview -->
-
-## Key Files
-
-<!-- Important files and what they contain -->
-"#,
-            name = name
-        );
-        std::fs::write(&index_path, index_content)?;
-        println!("{} {} agents/index.md", "✔".green(), "Created".dimmed());
-    }
-
-    // Create AXEL.md
+    // Create AXEL.md (includes project context after frontmatter)
     let config_content = generate_config(&name, &current_dir.to_string_lossy());
     std::fs::write(&config_path, config_content)?;
     println!("{} {} AXEL.md", "✔".green(), "Created".dimmed());
@@ -367,22 +338,22 @@ description: Project documentation for AI assistants
     Ok(())
 }
 
-/// Scan for existing agents and consolidate them using AI.
+/// Scan for existing skills and consolidate them using AI.
 ///
-/// This experimental command discovers agent files across the filesystem by:
+/// This experimental command discovers skill files across the filesystem by:
 /// 1. Prompting for a directory to scan
-/// 2. Walking the directory tree (ignoring .gitignore) looking for known agent patterns
-/// 3. Copying found files to a staging directory (`~/.config/axel/agents/.bootstrap-staging/`)
-/// 4. Launching an AI assistant to consolidate and organize the agents
+/// 2. Walking the directory tree (ignoring .gitignore) looking for known skill patterns
+/// 3. Copying found files to a staging directory (`~/.config/axel/skills/.bootstrap-staging/`)
+/// 4. Launching an AI assistant to consolidate and organize the skills
 ///
 /// The AI is given instructions to merge duplicates, create proper directory structures
-/// (`<name>/AGENT.md`), and clean up the staging directory when done.
+/// (`<name>/SKILL.md`), and clean up the staging directory when done.
 ///
-/// For more controlled imports, prefer `axel agent import`.
-fn bootstrap_agents() -> Result<()> {
+/// For more controlled imports, prefer `axel skill import`.
+fn bootstrap_skills() -> Result<()> {
     use std::os::unix::process::CommandExt;
 
-    use axel_core::all_agent_patterns;
+    use axel_core::all_skill_patterns;
     use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
     use ignore::WalkBuilder;
 
@@ -391,7 +362,7 @@ fn bootstrap_agents() -> Result<()> {
 
     // Prompt for directory to scan
     let scan_dir: String = Input::with_theme(&theme)
-        .with_prompt("Directory to scan for agents")
+        .with_prompt("Directory to scan for skills")
         .default(current_dir.to_string_lossy().to_string())
         .interact_text()?;
 
@@ -410,22 +381,22 @@ fn bootstrap_agents() -> Result<()> {
 
     println!();
     println!(
-        "{} Scanning {} for agent files...",
+        "{} Scanning {} for skill files...",
         "...".dimmed(),
         scan_dir
     );
     println!();
 
-    // Get agent file patterns from all drivers
-    let agent_patterns = all_agent_patterns();
+    // Get skill file patterns from all drivers
+    let skill_patterns = all_skill_patterns();
 
     // Use ignore crate (ripgrep's directory walker) for fast traversal
-    // Don't respect .gitignore since agent files are often gitignored
-    let mut found_agents: Vec<PathBuf> = Vec::new();
+    // Don't respect .gitignore since skill files are often gitignored
+    let mut found_skills: Vec<PathBuf> = Vec::new();
 
     let walker = WalkBuilder::new(&scan_path)
         .hidden(false) // Include hidden directories like .claude
-        .git_ignore(false) // Don't respect .gitignore - agent files are often ignored
+        .git_ignore(false) // Don't respect .gitignore - skill files are often ignored
         .git_global(false)
         .git_exclude(false)
         .build();
@@ -446,7 +417,7 @@ fn bootstrap_agents() -> Result<()> {
         let path_str = path.to_string_lossy();
 
         // Check if this matches any of our patterns
-        let is_agent = agent_patterns.iter().any(|pattern| {
+        let is_skill = skill_patterns.iter().any(|pattern| {
             if pattern.contains('*') {
                 // Simple glob matching
                 let parts: Vec<&str> = pattern.split('*').collect();
@@ -462,23 +433,23 @@ fn bootstrap_agents() -> Result<()> {
             }
         });
 
-        if is_agent {
-            found_agents.push(path.to_path_buf());
+        if is_skill {
+            found_skills.push(path.to_path_buf());
         }
     }
 
-    if found_agents.is_empty() {
-        println!("{}", "No agent files found.".yellow());
+    if found_skills.is_empty() {
+        println!("{}", "No skill files found.".yellow());
         return Ok(());
     }
 
-    // Display found agents
-    println!("{} {} agent files:", "✔".green(), found_agents.len());
+    // Display found skills
+    println!("{} {} skill files:", "✔".green(), found_skills.len());
     println!();
-    for agent in &found_agents {
-        let rel_path = agent
+    for skill in &found_skills {
+        let rel_path = skill
             .strip_prefix(&scan_path)
-            .unwrap_or(agent)
+            .unwrap_or(skill)
             .display()
             .to_string();
         println!("  {} {}", "-".dimmed(), rel_path);
@@ -487,7 +458,7 @@ fn bootstrap_agents() -> Result<()> {
 
     // Confirm consolidation
     let proceed = Confirm::with_theme(&theme)
-        .with_prompt("Consolidate these agents to ~/.config/axel/agents?")
+        .with_prompt("Consolidate these skills to ~/.config/axel/skills?")
         .default(true)
         .interact()?;
 
@@ -496,37 +467,37 @@ fn bootstrap_agents() -> Result<()> {
         return Ok(());
     }
 
-    // Copy agents to global directory
-    let global_agents_dir = home_dir()?.join(".config/axel/agents");
-    std::fs::create_dir_all(&global_agents_dir)?;
+    // Copy skills to global directory
+    let global_skills_dir = home_dir()?.join(".config/axel/skills");
+    std::fs::create_dir_all(&global_skills_dir)?;
 
-    let staging_dir = global_agents_dir.join(".bootstrap-staging");
+    let staging_dir = global_skills_dir.join(".bootstrap-staging");
     std::fs::create_dir_all(&staging_dir)?;
 
-    for (i, agent_path) in found_agents.iter().enumerate() {
+    for (i, skill_path) in found_skills.iter().enumerate() {
         let dest_name = format!(
             "{:03}-{}.md",
             i,
-            agent_path
+            skill_path
                 .file_stem()
                 .and_then(|n| n.to_str())
-                .unwrap_or("agent")
+                .unwrap_or("skill")
         );
         let dest_path = staging_dir.join(&dest_name);
-        std::fs::copy(agent_path, &dest_path)?;
+        std::fs::copy(skill_path, &dest_path)?;
     }
 
     println!();
     println!(
-        "{} {} files to ~/.config/axel/agents/.bootstrap-staging/",
+        "{} {} files to ~/.config/axel/skills/.bootstrap-staging/",
         "✔".green(),
-        found_agents.len()
+        found_skills.len()
     );
 
     // Select AI for consolidation
     let ai_options = ["Claude Code", "Codex", "OpenCode"];
     let ai_selection = Select::with_theme(&theme)
-        .with_prompt("Which AI should consolidate these agents?")
+        .with_prompt("Which AI should consolidate these skills?")
         .items(&ai_options)
         .default(0)
         .interact()?;
@@ -540,7 +511,7 @@ fn bootstrap_agents() -> Result<()> {
 
     println!();
     println!(
-        "{} Starting {} to consolidate agents...",
+        "{} Starting {} to consolidate skills...",
         "✔".green(),
         ai_command
     );
@@ -548,45 +519,45 @@ fn bootstrap_agents() -> Result<()> {
 
     // Build the consolidation prompt
     let prompt = format!(
-        r#"I have {} agent files in .bootstrap-staging/ that were discovered from various projects.
+        r#"I have {} skill files in .bootstrap-staging/ that were discovered from various projects.
 
-Please consolidate and organize them into clean agents:
+Please consolidate and organize them into clean skills:
 
 ## Instructions
 
 1. Read all files in .bootstrap-staging/
-2. Identify unique, valuable agents (merge duplicates, remove redundant ones)
-3. For each unique agent, create a directory structure:
+2. Identify unique, valuable skills (merge duplicates, remove redundant ones)
+3. For each unique skill, create a directory structure:
 
-   <agent-name>/AGENT.md
+   <skill-name>/SKILL.md
 
-   Example: code-reviewer/AGENT.md, rust-developer/AGENT.md
+   Example: code-reviewer/SKILL.md, rust-developer/SKILL.md
 
-4. Each AGENT.md must have this format:
+4. Each SKILL.md must have this format:
    ```markdown
    ---
-   name: <agent-name>
-   description: <one-line description of what this agent does>
+   name: <skill-name>
+   description: <one-line description of what this skill does>
    ---
 
-   # <Agent Name>
+   # <Skill Name>
 
-   <agent instructions here>
+   <skill instructions here>
    ```
 
-5. After creating all agents, delete the .bootstrap-staging/ directory
+5. After creating all skills, delete the .bootstrap-staging/ directory
 
 ## Guidelines
 
 - Use kebab-case for directory names (e.g., code-reviewer, not CodeReviewer)
-- Merge similar agents into one comprehensive agent
+- Merge similar skills into one comprehensive skill
 - Focus on quality over quantity
 - Keep the best instructions from duplicates"#,
-        found_agents.len()
+        found_skills.len()
     );
 
-    // Change to the global agents directory and launch AI
-    std::env::set_current_dir(&global_agents_dir)?;
+    // Change to the global skills directory and launch AI
+    std::env::set_current_dir(&global_skills_dir)?;
 
     let err = std::process::Command::new(ai_command).arg(&prompt).exec();
 
@@ -607,16 +578,16 @@ fn setup_axel() -> Result<()> {
     println!();
 
     let global_dir = home.join(".axel");
-    let global_agents = global_dir.join("agents");
+    let global_skills = global_dir.join("skills");
 
     if !global_dir.exists() {
         std::fs::create_dir_all(&global_dir)?;
         println!("{} {} ~/.axel/", "✔".green(), "Created".dimmed());
     }
 
-    if !global_agents.exists() {
-        std::fs::create_dir_all(&global_agents)?;
-        println!("{} {} ~/.axel/agents/", "✔".green(), "Created".dimmed());
+    if !global_skills.exists() {
+        std::fs::create_dir_all(&global_skills)?;
+        println!("{} {} ~/.axel/skills/", "✔".green(), "Created".dimmed());
     }
 
     let global_config = global_dir.join("AXEL.md");
@@ -643,7 +614,7 @@ fn setup_axel() -> Result<()> {
             .interact_text()?;
 
         let org_path = PathBuf::from(&org_base);
-        let org_agents = org_path.join("agents");
+        let org_skills = org_path.join("skills");
         let org_workspaces = org_path.join("workspaces");
 
         if !org_path.exists() {
@@ -651,10 +622,10 @@ fn setup_axel() -> Result<()> {
             println!("{} {} {}/", "✔".green(), "Created".dimmed(), org_base);
         }
 
-        if !org_agents.exists() {
-            std::fs::create_dir_all(&org_agents)?;
+        if !org_skills.exists() {
+            std::fs::create_dir_all(&org_skills)?;
             println!(
-                "{} {} {}/agents/",
+                "{} {} {}/skills/",
                 "✔".green(),
                 "Created".dimmed(),
                 org_base

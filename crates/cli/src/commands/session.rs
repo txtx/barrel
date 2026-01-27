@@ -9,10 +9,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use axel_core::{
-    ClaudeDriver, ProfileType, ShellConfig,
+    ProfileType, ShellConfig,
     claude::ClaudeCommand,
     config::{expand_path, load_config},
-    drivers, git,
+    drivers,
+    git,
+    generate_hooks_settings, settings_path, write_settings,
     tmux::{
         AXEL_MANIFEST_ENV, attach_session, create_workspace as tmux_create_workspace,
         detach_session, get_environment, has_session, kill_session, list_sessions,
@@ -21,7 +23,7 @@ use axel_core::{
 use colored::Colorize;
 
 use crate::{
-    commands::agent::{cleanup_agents, format_cleaned_drivers},
+    commands::skill::{cleanup_skills, format_cleaned_drivers},
     display_path,
 };
 
@@ -87,7 +89,7 @@ pub fn do_list_sessions(axel_only: bool) -> Result<()> {
 pub fn do_kill_workspace(
     workspaces_dir: &Path,
     name: &str,
-    keep_agents: bool,
+    keep_skills: bool,
     prune_worktree: bool,
     worktree_branch: Option<&str>,
     skip_confirm: bool,
@@ -113,9 +115,9 @@ pub fn do_kill_workspace(
         }
     }
 
-    // Skip agent cleanup for worktree sessions - the worktree directory
+    // Skip skill cleanup for worktree sessions - the worktree directory
     // may be pruned anyway, and we don't want to accidentally clean the main repo
-    let cleaned = if !keep_agents && worktree_branch.is_none() {
+    let cleaned = if !keep_skills && worktree_branch.is_none() {
         let session_manifest = get_environment(name, AXEL_MANIFEST_ENV).map(PathBuf::from);
         let config_path = workspaces_dir.join(name).join("AXEL.md");
         let local_config = std::env::current_dir().ok().map(|d| d.join("AXEL.md"));
@@ -126,7 +128,7 @@ pub fn do_kill_workspace(
             .or_else(|| local_config.and_then(|p| load_config(&p).ok()));
 
         cfg.and_then(|c| c.workspace_dir())
-            .map(|dir| cleanup_agents(&dir))
+            .map(|dir| cleanup_skills(&dir))
             .unwrap_or_default()
     } else {
         Vec::new()
@@ -139,7 +141,7 @@ pub fn do_kill_workspace(
 
     if !cleaned.is_empty() {
         println!(
-            "{} {} {} agents",
+            "{} {} {} skills",
             "✔".green(),
             "Cleaned".dimmed(),
             format_cleaned_drivers(&cleaned)
@@ -276,42 +278,41 @@ fn launch_shell_mode(config: &axel_core::WorkspaceConfig, profile: Option<&str>)
         .or_else(|| config.workspace_dir());
 
     if let Some(ref workspace_dir) = work_dir {
-        let (driver_name, agent_names) = match &first_pane.config {
-            ShellConfig::Claude(c) => ("claude", &c.agents),
-            ShellConfig::Codex(c) => ("codex", &c.agents),
-            ShellConfig::Opencode(c) => ("opencode", &c.agents),
-            ShellConfig::Antigravity(c) => ("antigravity", &c.agents),
+        let (driver_name, skill_names) = match &first_pane.config {
+            ShellConfig::Claude(c) => ("claude", &c.skills),
+            ShellConfig::Codex(c) => ("codex", &c.skills),
+            ShellConfig::Opencode(c) => ("opencode", &c.skills),
+            ShellConfig::Antigravity(c) => ("antigravity", &c.skills),
             ShellConfig::Custom(_) => ("", &Vec::new()),
         };
 
-        if !agent_names.is_empty()
+        if !skill_names.is_empty()
             && let Some(driver) = drivers::get_driver(driver_name)
         {
-            let agent_paths = config.resolve_agents(agent_names);
+            let skill_paths = config.resolve_skills(skill_names);
             if let Some(count) = driver
-                .install_agents(workspace_dir, &agent_paths)
+                .install_skills(workspace_dir, &skill_paths)
                 .ok()
                 .filter(|&c| c > 0)
             {
-                let agents_word = if count == 1 { "agent" } else { "agents" };
+                let skills_word = if count == 1 { "skill" } else { "skills" };
                 eprintln!(
                     "{} {} {} {} for {}",
                     "✔".green(),
                     "Installed".dimmed(),
                     count,
-                    agents_word,
+                    skills_word,
                     driver.name()
                 );
             }
         }
 
-        if matches!(&first_pane.config, ShellConfig::Claude(_)) {
-            let claude_driver = ClaudeDriver;
-            if claude_driver
-                .install_index(config, workspace_dir)
-                .unwrap_or(false)
-            {
-                eprintln!("{} {} CLAUDE.md symlink", "✔".green(), "Created".dimmed());
+        // Install index file (CLAUDE.md, AGENTS.md, etc.) for the driver
+        if let Some(driver) = drivers::get_driver(driver_name) {
+            if let Some(filename) = driver.index_filename() {
+                if driver.install_index(config, workspace_dir).unwrap_or(false) {
+                    eprintln!("{} {} {} symlink", "✔".green(), "Created".dimmed(), filename);
+                }
             }
         }
     }
@@ -337,7 +338,18 @@ pub fn launch_shell_by_name(
     manifest_path: &Path,
     shell_name: &str,
     prompt_override: Option<&str>,
+    pane_id: Option<&str>,
+    server_port: Option<u16>,
 ) -> Result<()> {
+    // Use provided port or default to 4318
+    let port = server_port.unwrap_or(4318);
+
+    // If port is provided (macOS app mode), start embedded server in background thread
+    // The server will automatically terminate when this process exits
+    if server_port.is_some() {
+        start_embedded_server(port, pane_id)?;
+    }
+
     let config = load_config(manifest_path)?;
     let index = config.load_index();
 
@@ -361,53 +373,96 @@ pub fn launch_shell_by_name(
     let current_dir = std::env::current_dir().ok();
 
     if let Some(ref install_dir) = current_dir {
-        let (driver_name, agent_names) = match shell_config {
-            ShellConfig::Claude(c) => ("claude", &c.agents),
-            ShellConfig::Codex(c) => ("codex", &c.agents),
-            ShellConfig::Opencode(c) => ("opencode", &c.agents),
-            ShellConfig::Antigravity(c) => ("antigravity", &c.agents),
+        let (driver_name, skill_names) = match shell_config {
+            ShellConfig::Claude(c) => ("claude", &c.skills),
+            ShellConfig::Codex(c) => ("codex", &c.skills),
+            ShellConfig::Opencode(c) => ("opencode", &c.skills),
+            ShellConfig::Antigravity(c) => ("antigravity", &c.skills),
             ShellConfig::Custom(_) => ("", &Vec::new()),
         };
 
-        if !agent_names.is_empty()
+        if !skill_names.is_empty()
             && let Some(driver) = drivers::get_driver(driver_name)
         {
-            let agent_paths = config.resolve_agents(agent_names);
+            let skill_paths = config.resolve_skills(skill_names);
             if let Some(count) = driver
-                .install_agents(install_dir, &agent_paths)
+                .install_skills(install_dir, &skill_paths)
                 .ok()
                 .filter(|&c| c > 0)
             {
-                let agents_word = if count == 1 { "agent" } else { "agents" };
+                let skills_word = if count == 1 { "skill" } else { "skills" };
                 eprintln!(
                     "{} {} {} {} for {}",
                     "✔".green(),
                     "Installed".dimmed(),
                     count,
-                    agents_word,
+                    skills_word,
                     driver.name()
                 );
             }
         }
 
+        // Install index file (CLAUDE.md, AGENTS.md, etc.) for the driver
+        if let Some(driver) = drivers::get_driver(driver_name) {
+            if let Some(filename) = driver.index_filename() {
+                if driver.install_index(&config, install_dir).unwrap_or(false) {
+                    eprintln!("{} {} {} symlink", "✔".green(), "Created".dimmed(), filename);
+                }
+            }
+        }
+
+        // Configure Claude hooks if pane_id is provided (for macOS app integration)
         if matches!(shell_config, ShellConfig::Claude(_)) {
-            let claude_driver = ClaudeDriver;
-            if claude_driver
-                .install_index(&config, install_dir)
-                .unwrap_or(false)
-            {
-                eprintln!("{} {} CLAUDE.md symlink", "✔".green(), "Created".dimmed());
+            if let Some(pane_id) = pane_id {
+                let hooks_settings = generate_hooks_settings(port, pane_id);
+                let hooks_path = settings_path(install_dir);
+                if write_settings(&hooks_settings, &hooks_path).is_ok() {
+                    eprintln!(
+                        "{} {} Claude hooks for pane {} (port {})",
+                        "✔".green(),
+                        "Configured".dimmed(),
+                        &pane_id[..8.min(pane_id.len())],
+                        port
+                    );
+                }
             }
         }
     }
 
     let command = build_shell_command(shell_config, index.as_ref(), prompt_override);
 
+    // Get the driver for this shell type to check OTEL support
+    let driver_name = match shell_config {
+        ShellConfig::Claude(_) => "claude",
+        ShellConfig::Codex(_) => "codex",
+        ShellConfig::Opencode(_) => "opencode",
+        ShellConfig::Antigravity(_) => "antigravity",
+        ShellConfig::Custom(_) => "",
+    };
+
     let status = if let Some(cmd) = command {
-        std::process::Command::new("sh")
-            .arg("-c")
-            .arg(&cmd)
-            .status()
+        let mut process = std::process::Command::new("sh");
+        process.arg("-c").arg(&cmd);
+
+        // Enable OTEL telemetry if driver supports it and we have a pane_id
+        if let (Some(pane_id), Some(driver)) = (pane_id, drivers::get_driver(driver_name)) {
+            if driver.supports_otel() {
+                let otel_vars = driver.otel_env_vars(port, pane_id);
+                for (key, value) in &otel_vars {
+                    process.env(key, value);
+                }
+                if !otel_vars.is_empty() {
+                    eprintln!(
+                        "{} {} OTEL telemetry for {}",
+                        "✔".green(),
+                        "Enabled".dimmed(),
+                        driver.name()
+                    );
+                }
+            }
+        }
+
+        process.status()
     } else {
         eprintln!("{}", "No command built, falling back to shell".red());
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
@@ -415,7 +470,7 @@ pub fn launch_shell_by_name(
     };
 
     if let Some(ref install_dir) = current_dir {
-        let cleaned = cleanup_agents(install_dir);
+        let cleaned = cleanup_skills(install_dir);
         if !cleaned.is_empty() {
             eprintln!(
                 "{} {} {} artifacts",
@@ -588,4 +643,54 @@ fn build_shell_command(
         }
         ShellConfig::Custom(c) => c.command.clone(),
     }
+}
+
+/// Start the event server in a background thread.
+/// The server will automatically terminate when this process exits.
+fn start_embedded_server(port: u16, pane_id: Option<&str>) -> Result<()> {
+    use axel_core::server::{ServerConfig, run_server};
+
+    // Create log path in current directory
+    let log_path = std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(".axel")
+        .join("events.jsonl");
+
+    // Ensure log directory exists
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let config = ServerConfig {
+        port,
+        session: String::new(), // No tmux session monitoring in macOS app mode
+        log_path,
+    };
+
+    let pane_display = pane_id
+        .map(|id| format!(" for pane {}", &id[..8.min(id.len())]))
+        .unwrap_or_default();
+
+    eprintln!(
+        "{} {} event server on port {}{}",
+        "✔".green(),
+        "Starting".dimmed(),
+        port,
+        pane_display
+    );
+
+    // Spawn the server in a background thread
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        rt.block_on(async {
+            if let Err(e) = run_server(config).await {
+                eprintln!("Server error: {}", e);
+            }
+        });
+    });
+
+    // Give the server a moment to start
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    Ok(())
 }

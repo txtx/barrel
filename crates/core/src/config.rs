@@ -2,7 +2,7 @@
 //!
 //! This module provides the core configuration types for axel workspaces,
 //! including workspace configuration, shell definitions, terminal profiles,
-//! and agent management.
+//! and skill management.
 
 use std::{
     collections::HashMap,
@@ -31,32 +31,32 @@ pub struct WorkspaceConfig {
     pub terminal: TerminalConfig,
     /// Agent directories configuration
     #[serde(default)]
-    pub agents: Vec<AgentPathConfig>,
+    pub skills: Vec<SkillPathConfig>,
     /// Path to the manifest file (set during loading, not from YAML)
     #[serde(skip)]
     pub manifest_path: Option<PathBuf>,
 }
 
-/// Configuration for an agent search path
+/// Configuration for an skill search path
 #[derive(Debug, Deserialize, Clone)]
-pub struct AgentPathConfig {
-    /// Path to agents directory (relative to manifest or absolute)
+pub struct SkillPathConfig {
+    /// Path to skills directory (relative to manifest or absolute)
     pub path: String,
 }
 
 impl WorkspaceConfig {
-    /// Get all resolved agent directories that exist
-    pub fn agents_dirs(&self) -> Vec<PathBuf> {
+    /// Get all resolved skill directories that exist
+    pub fn skills_dirs(&self) -> Vec<PathBuf> {
         let manifest_dir = self
             .manifest_path
             .as_ref()
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf());
 
-        self.agents
+        self.skills
             .iter()
-            .filter_map(|agent_config| {
-                let path = &agent_config.path;
+            .filter_map(|skill_config| {
+                let path = &skill_config.path;
                 let resolved = if path.starts_with('/') || path.starts_with('~') {
                     PathBuf::from(expand_path(path))
                 } else if let Some(ref base) = manifest_dir {
@@ -74,23 +74,23 @@ impl WorkspaceConfig {
             .collect()
     }
 
-    /// Find an agent file by name across all agent directories
+    /// Find an skill file by name across all skill directories
     ///
-    /// Supports both flat files (name.md) and directory structure (name/AGENT.md).
-    /// Returns the first match (priority order defined by agents config).
-    /// Warns if agent is found in multiple directories.
-    pub fn find_agent(&self, name: &str) -> Option<PathBuf> {
-        let dirs = self.agents_dirs();
+    /// Supports both flat files (name.md) and directory structure (name/SKILL.md).
+    /// Returns the first match (priority order defined by skills config).
+    /// Warns if skill is found in multiple directories.
+    pub fn find_skill(&self, name: &str) -> Option<PathBuf> {
+        let dirs = self.skills_dirs();
         let mut first_match: Option<PathBuf> = None;
         let mut _first_dir: Option<PathBuf> = None;
 
         for dir in &dirs {
-            // Check for directory structure: agents/<name>/AGENT.md
-            let dir_path = dir.join(name).join("AGENT.md");
+            // Check for directory structure: skills/<name>/SKILL.md
+            let dir_path = dir.join(name).join("SKILL.md");
             if dir_path.exists() {
                 if first_match.is_some() {
                     eprintln!(
-                        "{} Duplicate agent '{}', ignoring {}",
+                        "{} Duplicate skill '{}', ignoring {}",
                         "!".yellow(),
                         name,
                         dir.display()
@@ -102,7 +102,7 @@ impl WorkspaceConfig {
                 continue;
             }
 
-            // Check for flat file: agents/<name>.md (but not index.md)
+            // Check for flat file: skills/<name>.md (but not index.md)
             if name == "index" {
                 continue;
             }
@@ -110,7 +110,7 @@ impl WorkspaceConfig {
             if flat_path.exists() {
                 if first_match.is_some() {
                     eprintln!(
-                        "{} Duplicate agent '{}', ignoring {}",
+                        "{} Duplicate skill '{}', ignoring {}",
                         "!".yellow(),
                         name,
                         dir.display()
@@ -125,31 +125,31 @@ impl WorkspaceConfig {
         first_match
     }
 
-    /// Find all agent files across all agent directories
+    /// Find all skill files across all skill directories
     ///
     /// Uses priority order from config - first directory wins for conflicting names.
-    /// Returns agents in priority order (preserves insertion order via IndexMap internally).
-    pub fn find_all_agents(&self) -> Vec<PathBuf> {
-        let mut agents_by_name: IndexMap<String, (PathBuf, PathBuf)> = IndexMap::new();
+    /// Returns skills in priority order (preserves insertion order via IndexMap internally).
+    pub fn find_all_skills(&self) -> Vec<PathBuf> {
+        let mut skills_by_name: IndexMap<String, (PathBuf, PathBuf)> = IndexMap::new();
 
-        for dir in self.agents_dirs() {
+        for dir in self.skills_dirs() {
             if let Ok(entries) = std::fs::read_dir(&dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
 
-                    let (agent_name, agent_path) = if path.is_dir() {
-                        let agent_file = path.join("AGENT.md");
-                        if agent_file.exists() {
+                    let (skill_name, skill_path) = if path.is_dir() {
+                        let skill_file = path.join("SKILL.md");
+                        if skill_file.exists() {
                             let name = path
                                 .file_name()
                                 .map(|n| n.to_string_lossy().to_string())
                                 .unwrap_or_default();
-                            (name, agent_file)
+                            (name, skill_file)
                         } else {
                             continue;
                         }
                     } else if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
-                        // Skip index.md - it's used as workspace context, not an agent
+                        // Skip index.md - it's used as workspace context, not an skill
                         if path.file_name().is_some_and(|n| n == "index.md") {
                             continue;
                         }
@@ -162,55 +162,55 @@ impl WorkspaceConfig {
                         continue;
                     };
 
-                    if agent_name.is_empty() {
+                    if skill_name.is_empty() {
                         continue;
                     }
 
-                    if let Some((existing_path, existing_dir)) = agents_by_name.get(&agent_name) {
+                    if let Some((existing_path, existing_dir)) = skills_by_name.get(&skill_name) {
                         eprintln!(
-                            "{} Duplicate agent '{}', ignoring {}",
+                            "{} Duplicate skill '{}', ignoring {}",
                             "!".yellow(),
-                            agent_name,
+                            skill_name,
                             dir.display()
                         );
                         let _ = (existing_path, existing_dir);
                     } else {
-                        agents_by_name.insert(agent_name, (agent_path, dir.clone()));
+                        skills_by_name.insert(skill_name, (skill_path, dir.clone()));
                     }
                 }
             }
         }
 
-        agents_by_name.into_values().map(|(path, _)| path).collect()
+        skills_by_name.into_values().map(|(path, _)| path).collect()
     }
 
-    /// Resolve agent paths based on config (supports "*" for all)
-    pub fn resolve_agents(&self, agent_names: &[String]) -> Vec<PathBuf> {
-        if agent_names.iter().any(|n| n == "*") {
-            self.find_all_agents()
+    /// Resolve skill paths based on config (supports "*" for all)
+    pub fn resolve_skills(&self, skill_names: &[String]) -> Vec<PathBuf> {
+        if skill_names.iter().any(|n| n == "*") {
+            self.find_all_skills()
         } else {
-            agent_names
+            skill_names
                 .iter()
-                .filter_map(|name| self.find_agent(name))
+                .filter_map(|name| self.find_skill(name))
                 .collect()
         }
     }
 
-    /// Load and parse agents from paths
+    /// Load and parse skills from paths
     ///
-    /// Returns agents in priority order (IndexMap preserves insertion order).
+    /// Returns skills in priority order (IndexMap preserves insertion order).
     #[allow(dead_code)]
-    pub fn load_agents(&self, agent_names: &[String]) -> IndexMap<String, Agent> {
-        let paths = self.resolve_agents(agent_names);
-        let mut agents = IndexMap::new();
+    pub fn load_skills(&self, skill_names: &[String]) -> IndexMap<String, Skill> {
+        let paths = self.resolve_skills(skill_names);
+        let mut skills = IndexMap::new();
 
         for path in paths {
-            if let Ok(agent) = Agent::from_file(&path) {
-                agents.entry(agent.name.clone()).or_insert(agent);
+            if let Ok(skill) = Skill::from_file(&path) {
+                skills.entry(skill.name.clone()).or_insert(skill);
             }
         }
 
-        agents
+        skills
     }
 
     /// Get workspace directory (parent of manifest)
@@ -221,17 +221,14 @@ impl WorkspaceConfig {
             .map(|p| p.to_path_buf())
     }
 
-    /// Load the workspace index file (agents/index.md)
+    /// Load the workspace context from AXEL.md
     ///
-    /// Returns the parsed WorkspaceIndex if found, None otherwise.
+    /// Reads the content after the YAML frontmatter from the manifest file.
+    /// This content is used as initial context for AI assistants.
     pub fn load_index(&self) -> Option<WorkspaceIndex> {
-        for dir in self.agents_dirs() {
-            let index_path = dir.join("index.md");
-            if index_path.exists() {
-                return WorkspaceIndex::from_file(&index_path).ok();
-            }
-        }
-        None
+        self.manifest_path.as_ref().and_then(|path| {
+            WorkspaceIndex::from_manifest(path, &self.workspace).ok()
+        })
     }
 
     /// Get the profile type for a given profile name (defaults to "default")
@@ -297,16 +294,16 @@ impl WorkspaceConfig {
 }
 
 // =============================================================================
-// Agent Types
+// Skill Types
 // =============================================================================
 
-/// Parsed agent ready for AI tool configuration
+/// Parsed skill ready for AI tool configuration
 #[derive(Debug, Clone, Serialize)]
-pub struct Agent {
+pub struct Skill {
     /// Agent name (derived from filename or frontmatter)
     #[serde(skip)]
     pub name: String,
-    /// Description of when to use this agent
+    /// Description of when to use this skill
     pub description: String,
     /// The system prompt content
     pub prompt: String,
@@ -318,9 +315,9 @@ pub struct Agent {
     pub model: Option<String>,
 }
 
-/// YAML frontmatter for agent files
+/// YAML frontmatter for skill files
 #[derive(Debug, Deserialize, Default)]
-struct AgentFrontmatter {
+struct SkillFrontmatter {
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
@@ -331,21 +328,21 @@ struct AgentFrontmatter {
     model: Option<String>,
 }
 
-impl Agent {
-    /// Parse an agent from a markdown file with optional YAML frontmatter
+impl Skill {
+    /// Parse an skill from a markdown file with optional YAML frontmatter
     pub fn from_file(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
 
         // Derive name from path
-        let name = if path.file_name().map(|n| n == "AGENT.md").unwrap_or(false) {
+        let name = if path.file_name().map(|n| n == "SKILL.md").unwrap_or(false) {
             path.parent()
                 .and_then(|p| p.file_name())
                 .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "agent".to_string())
+                .unwrap_or_else(|| "skill".to_string())
         } else {
             path.file_stem()
                 .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "agent".to_string())
+                .unwrap_or_else(|| "skill".to_string())
         };
 
         // Parse YAML frontmatter
@@ -353,13 +350,13 @@ impl Agent {
             if let Some(end_idx) = after_start.find("\n---") {
                 let fm_content = &after_start[..end_idx];
                 let rest = &after_start[end_idx + 4..];
-                let fm: AgentFrontmatter = serde_yaml::from_str(fm_content).unwrap_or_default();
+                let fm: SkillFrontmatter = serde_yaml::from_str(fm_content).unwrap_or_default();
                 (fm, rest.trim().to_string())
             } else {
-                (AgentFrontmatter::default(), content)
+                (SkillFrontmatter::default(), content)
             }
         } else {
-            (AgentFrontmatter::default(), content)
+            (SkillFrontmatter::default(), content)
         };
 
         let name = frontmatter.name.unwrap_or(name);
@@ -370,7 +367,7 @@ impl Agent {
                 .find(|l| !l.trim().is_empty() && !l.starts_with('#'))
                 .or_else(|| prompt.lines().next())
                 .map(|l| l.trim_start_matches('#').trim().to_string())
-                .unwrap_or_else(|| format!("{} agent", name))
+                .unwrap_or_else(|| format!("{} skill", name))
         });
 
         let tools = frontmatter.tools.map(|t| {
@@ -380,7 +377,7 @@ impl Agent {
                 .collect()
         });
 
-        Ok(Agent {
+        Ok(Skill {
             name,
             description,
             prompt,
@@ -394,12 +391,13 @@ impl Agent {
 // Workspace Index
 // =============================================================================
 
-/// Workspace index - project context from agents/index.md
+/// Workspace index - project context from AXEL.md
 ///
-/// This is NOT an agent - it's a project description used as initial context.
+/// This is NOT a skill - it's a project description used as initial context.
+/// The content is extracted from AXEL.md after the YAML frontmatter.
 #[derive(Debug, Clone)]
 pub struct WorkspaceIndex {
-    /// Project name from frontmatter
+    /// Project name (from workspace config)
     pub name: String,
     /// Project description from frontmatter
     pub description: Option<String>,
@@ -407,43 +405,33 @@ pub struct WorkspaceIndex {
     pub content: String,
 }
 
-/// YAML frontmatter for index files
-#[derive(Debug, Deserialize, Default)]
-struct IndexFrontmatter {
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
-}
-
 impl WorkspaceIndex {
-    /// Parse a workspace index from a markdown file
-    pub fn from_file(path: &Path) -> Result<Self> {
+    /// Parse a workspace index from the AXEL.md manifest file
+    ///
+    /// Extracts the content after the YAML frontmatter, which contains
+    /// project documentation used as context for AI assistants.
+    pub fn from_manifest(path: &Path, workspace_name: &str) -> Result<Self> {
         let raw_content = std::fs::read_to_string(path)?;
 
-        let (frontmatter, content) = if let Some(after_start) = raw_content.strip_prefix("---") {
+        // Extract content after YAML frontmatter
+        let content = if let Some(after_start) = raw_content.strip_prefix("---") {
             if let Some(end_idx) = after_start.find("\n---") {
-                let fm_content = &after_start[..end_idx];
-                let rest = &after_start[end_idx + 4..];
-                let fm: IndexFrontmatter = serde_yaml::from_str(fm_content).unwrap_or_default();
-                (fm, rest.trim().to_string())
+                after_start[end_idx + 4..].trim().to_string()
             } else {
-                (IndexFrontmatter::default(), raw_content)
+                String::new()
             }
         } else {
-            (IndexFrontmatter::default(), raw_content)
+            raw_content.trim().to_string()
         };
 
-        let default_name = path
-            .parent()
-            .and_then(|p| p.parent())
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "workspace".to_string());
+        // Return None-equivalent if no content after frontmatter
+        if content.is_empty() {
+            anyhow::bail!("No content after frontmatter in AXEL.md");
+        }
 
         Ok(WorkspaceIndex {
-            name: frontmatter.name.unwrap_or(default_name),
-            description: frontmatter.description,
+            name: workspace_name.to_string(),
+            description: None,
             content,
         })
     }
@@ -573,7 +561,7 @@ struct ShellConfigRaw {
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
-    agents: Vec<String>,
+    skills: Vec<String>,
     #[serde(default)]
     allowed_tools: Vec<String>,
     #[serde(default)]
@@ -615,7 +603,7 @@ impl<'de> serde::Deserialize<'de> for ShellConfig {
                 color: raw.color,
                 notes: raw.notes,
                 model: raw.model,
-                agents: raw.agents,
+                skills: raw.skills,
                 allowed_tools: raw.allowed_tools,
                 disallowed_tools: raw.disallowed_tools,
                 prompt: raw.prompt,
@@ -627,7 +615,7 @@ impl<'de> serde::Deserialize<'de> for ShellConfig {
                 color: raw.color,
                 notes: raw.notes,
                 model: raw.model,
-                agents: raw.agents,
+                skills: raw.skills,
                 allowed_tools: raw.allowed_tools,
                 disallowed_tools: raw.disallowed_tools,
                 prompt: raw.prompt,
@@ -639,7 +627,7 @@ impl<'de> serde::Deserialize<'de> for ShellConfig {
                 color: raw.color,
                 notes: raw.notes,
                 model: raw.model,
-                agents: raw.agents,
+                skills: raw.skills,
                 allowed_tools: raw.allowed_tools,
                 disallowed_tools: raw.disallowed_tools,
                 prompt: raw.prompt,
@@ -651,7 +639,7 @@ impl<'de> serde::Deserialize<'de> for ShellConfig {
                 color: raw.color,
                 notes: raw.notes,
                 model: raw.model,
-                agents: raw.agents,
+                skills: raw.skills,
                 allowed_tools: raw.allowed_tools,
                 disallowed_tools: raw.disallowed_tools,
                 prompt: raw.prompt,
@@ -760,7 +748,7 @@ pub struct AiShellConfig {
     pub model: Option<String>,
     /// Agents to load - use "*" for all, or list specific names
     #[serde(default)]
-    pub agents: Vec<String>,
+    pub skills: Vec<String>,
     /// Allowed tools
     #[serde(default)]
     pub allowed_tools: Vec<String>,
@@ -877,14 +865,14 @@ pub fn generate_config(workspace: &str, _workspace_path: &str) -> String {
 workspace: {workspace}
 
 # =============================================================================
-# Agent directories
+# Skill directories
 # =============================================================================
-# Search paths for agent files (first match wins for duplicate names)
+# Search paths for skill files (first match wins for duplicate names)
 # Supports: ./relative, ~/home, /absolute paths
 
-agents:
-  - path: ./agents
-  - path: ~/.config/axel/agents
+skills:
+  - path: ./skills
+  - path: ~/.config/axel/skills
 
 # =============================================================================
 # Shell definitions
@@ -898,8 +886,8 @@ shells:
   # Claude Code - AI coding assistant
   - type: claude
     color: gray
-    agents:
-      - "*"                    # Load all agents, or list specific: ["agent1", "agent2"]
+    skills:
+      - "*"                    # Load all skills, or list specific: ["skill1", "skill2"]
     # model: sonnet            # Model: sonnet, opus, haiku
     # prompt: "Your task..."   # Initial prompt
     # allowed_tools: []        # Restrict to specific tools
@@ -909,18 +897,18 @@ shells:
   # Codex - OpenAI coding assistant
   # - type: codex
   #   color: green
-  #   agents: ["*"]
+  #   skills: ["*"]
   #   # model: gpt-4           # Model to use
 
   # OpenCode - Open-source coding assistant
   # - type: opencode
   #   color: blue
-  #   agents: ["*"]
+  #   skills: ["*"]
 
   # Antigravity - Google coding assistant
   # - type: antigravity
   #   color: orange
-  #   agents: ["*"]
+  #   skills: ["*"]
   #   # model: gemini-3-pro    # Model to use
 
   # Regular shell with notes displayed on startup
@@ -990,13 +978,23 @@ terminal:
 
 # {workspace}
 
-Axel workspace configuration. The YAML frontmatter above defines the workspace layout.
+<!-- Project context for AI assistants. This content is used as initial context when launching shells. -->
 
-- Launch: `axel`
-- Launch with profile: `axel --profile <name>`
-- Kill session: `axel -k {workspace}`
+## Overview
 
-See [docs.axel.md](https://docs.axel.md) for full configuration reference.
+<!-- Brief description of what this project does -->
+
+## Getting Started
+
+<!-- How to set up and run the project -->
+
+## Architecture
+
+<!-- High-level architecture overview -->
+
+## Key Files
+
+<!-- Important files and directories -->
 "#,
         workspace = workspace,
     )
@@ -1047,22 +1045,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_agent_parsing_without_frontmatter() {
-        let content = "# Test Agent\n\nYou are a helpful agent.";
+    fn test_skill_parsing_without_frontmatter() {
+        let content = "# Test Agent\n\nYou are a helpful skill.";
         let temp_dir = std::env::temp_dir();
-        let agent_path = temp_dir.join("test-agent.md");
-        std::fs::write(&agent_path, content).unwrap();
+        let skill_path = temp_dir.join("test-skill.md");
+        std::fs::write(&skill_path, content).unwrap();
 
-        let agent = Agent::from_file(&agent_path).unwrap();
-        assert_eq!(agent.name, "test-agent");
-        assert_eq!(agent.prompt, content);
-        assert!(agent.description.contains("Test Agent") || agent.description.contains("helpful"));
+        let skill = Agent::from_file(&skill_path).unwrap();
+        assert_eq!(skill.name, "test-skill");
+        assert_eq!(skill.prompt, content);
+        assert!(skill.description.contains("Test Agent") || skill.description.contains("helpful"));
 
-        std::fs::remove_file(&agent_path).ok();
+        std::fs::remove_file(&skill_path).ok();
     }
 
     #[test]
-    fn test_agent_parsing_with_frontmatter() {
+    fn test_skill_parsing_with_frontmatter() {
         let content = r#"---
 name: custom-name
 description: A custom description
@@ -1072,41 +1070,41 @@ model: opus
 
 # My Agent
 
-You are a specialized agent."#;
+You are a specialized skill."#;
 
         let temp_dir = std::env::temp_dir();
-        let agent_path = temp_dir.join("frontmatter-agent.md");
-        std::fs::write(&agent_path, content).unwrap();
+        let skill_path = temp_dir.join("frontmatter-skill.md");
+        std::fs::write(&skill_path, content).unwrap();
 
-        let agent = Agent::from_file(&agent_path).unwrap();
-        assert_eq!(agent.name, "custom-name");
-        assert_eq!(agent.description, "A custom description");
+        let skill = Agent::from_file(&skill_path).unwrap();
+        assert_eq!(skill.name, "custom-name");
+        assert_eq!(skill.description, "A custom description");
         assert_eq!(
-            agent.tools,
+            skill.tools,
             Some(vec![
                 "Read".to_string(),
                 "Write".to_string(),
                 "Bash".to_string()
             ])
         );
-        assert_eq!(agent.model, Some("opus".to_string()));
-        assert!(agent.prompt.contains("My Agent"));
-        assert!(agent.prompt.contains("specialized agent"));
+        assert_eq!(skill.model, Some("opus".to_string()));
+        assert!(skill.prompt.contains("My Agent"));
+        assert!(skill.prompt.contains("specialized skill"));
 
-        std::fs::remove_file(&agent_path).ok();
+        std::fs::remove_file(&skill_path).ok();
     }
 
     #[test]
-    fn test_agent_dir_structure() {
-        let temp_dir = std::env::temp_dir().join("axel-test-agents");
-        let agent_dir = temp_dir.join("my-agent");
-        std::fs::create_dir_all(&agent_dir).ok();
+    fn test_skill_dir_structure() {
+        let temp_dir = std::env::temp_dir().join("axel-test-skills");
+        let skill_dir = temp_dir.join("my-skill");
+        std::fs::create_dir_all(&skill_dir).ok();
 
-        let agent_file = agent_dir.join("AGENT.md");
-        std::fs::write(&agent_file, "# My Agent\n\nHello").unwrap();
+        let skill_file = skill_dir.join("SKILL.md");
+        std::fs::write(&skill_file, "# My Agent\n\nHello").unwrap();
 
-        let agent = Agent::from_file(&agent_file).unwrap();
-        assert_eq!(agent.name, "my-agent");
+        let skill = Agent::from_file(&skill_file).unwrap();
+        assert_eq!(skill.name, "my-skill");
 
         std::fs::remove_dir_all(&temp_dir).ok();
     }

@@ -21,3 +21,4 @@ dialoguer = { workspace = true }
 dirs = { workspace = true }
 comfy-table = "7.2.1"
 ignore = "0.4"
+tokio = { version = "1.43", features = ["rt-multi-thread"] }

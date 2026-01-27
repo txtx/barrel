@@ -1,47 +1,49 @@
-//! OpenCode agent driver.
+//! OpenCode skill driver.
 //!
-//! OpenCode uses a similar symlink strategy to Claude Code. Agents are installed
-//! as symlinks in `.opencode/agent/` directory within the workspace.
+//! OpenCode uses a similar symlink strategy to Claude Code. Skills are installed
+//! as symlinks in `.opencode/skill/` directory within the workspace.
 //!
 //! This driver:
-//! 1. Creates `.opencode/agent/` if it doesn't exist
-//! 2. Symlinks each agent file as `<name>.md`
+//! 1. Creates `.opencode/skill/` if it doesn't exist
+//! 2. Symlinks each skill file as `<name>.md`
 //! 3. On cleanup, removes only symlinks (preserving any manually created files)
 
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::AgentDriver;
+use super::claude::install_index_symlink;
+use super::SkillDriver;
+use crate::config::WorkspaceConfig;
 
-/// OpenCode agent driver
+/// OpenCode skill driver
 pub struct OpenCodeDriver;
 
-impl AgentDriver for OpenCodeDriver {
+impl SkillDriver for OpenCodeDriver {
     fn name(&self) -> &'static str {
         "opencode"
     }
 
-    fn agents_dir(&self, workspace_dir: &Path) -> PathBuf {
-        workspace_dir.join(".opencode").join("agent")
+    fn skills_dir(&self, workspace_dir: &Path) -> PathBuf {
+        workspace_dir.join(".opencode").join("skill")
     }
 
-    fn agent_patterns(&self) -> &'static [&'static str] {
-        &[".opencode/agent/*.md", ".opencode/AGENT.md"]
+    fn skill_patterns(&self) -> &'static [&'static str] {
+        &[".opencode/skill/*.md", ".opencode/SKILL.md"]
     }
 
-    fn install_agents(&self, workspace_dir: &Path, agent_paths: &[PathBuf]) -> Result<usize> {
-        if agent_paths.is_empty() {
+    fn install_skills(&self, workspace_dir: &Path, skill_paths: &[PathBuf]) -> Result<usize> {
+        if skill_paths.is_empty() {
             return Ok(0);
         }
 
-        let agents_dir = self.agents_dir(workspace_dir);
-        std::fs::create_dir_all(&agents_dir)?;
+        let skills_dir = self.skills_dir(workspace_dir);
+        std::fs::create_dir_all(&skills_dir)?;
 
         let mut count = 0;
-        for source_path in agent_paths {
-            let name = derive_agent_name(source_path);
-            let link_path = agents_dir.join(format!("{}.md", name));
+        for source_path in skill_paths {
+            let name = derive_skill_name(source_path);
+            let link_path = skills_dir.join(format!("{}.md", name));
 
             // Remove existing symlink/file if present
             if link_path.exists() || link_path.is_symlink() {
@@ -65,13 +67,13 @@ impl AgentDriver for OpenCodeDriver {
     }
 
     fn cleanup(&self, workspace_dir: &Path) -> bool {
-        let agents_dir = self.agents_dir(workspace_dir);
-        if !agents_dir.exists() {
-            return false;
-        }
-
         let mut cleaned = false;
-        if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+
+        // Remove skill symlinks from .opencode/skill/
+        let skills_dir = self.skills_dir(workspace_dir);
+        if skills_dir.exists()
+            && let Ok(entries) = std::fs::read_dir(&skills_dir)
+        {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path
@@ -85,24 +87,43 @@ impl AgentDriver for OpenCodeDriver {
             }
         }
 
+        // Remove AGENTS.md symlink
+        let agents_md = workspace_dir.join("AGENTS.md");
+        if agents_md
+            .symlink_metadata()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+            && std::fs::remove_file(&agents_md).is_ok()
+        {
+            cleaned = true;
+        }
+
         cleaned
+    }
+
+    fn index_filename(&self) -> Option<&'static str> {
+        Some("AGENTS.md")
+    }
+
+    fn install_index(&self, config: &WorkspaceConfig, workspace_dir: &Path) -> Result<bool> {
+        install_index_symlink(config, workspace_dir, "AGENTS.md")
     }
 }
 
-/// Derive agent name from file path.
+/// Derive skill name from file path.
 ///
 /// Handles two naming conventions:
-/// - `<name>/AGENT.md` → uses the directory name
-/// - `<name>.md` → uses the file stem
-fn derive_agent_name(path: &Path) -> String {
-    if path.file_name().map(|n| n == "AGENT.md").unwrap_or(false) {
+/// - `<name>/SKILL.md` -> uses the directory name
+/// - `<name>.md` -> uses the file stem
+fn derive_skill_name(path: &Path) -> String {
+    if path.file_name().map(|n| n == "SKILL.md").unwrap_or(false) {
         path.parent()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "agent".to_string())
+            .unwrap_or_else(|| "skill".to_string())
     } else {
         path.file_stem()
             .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "agent".to_string())
+            .unwrap_or_else(|| "skill".to_string())
     }
 }

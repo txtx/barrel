@@ -13,12 +13,12 @@ pub struct ServerArgs {
     #[arg(short, long, default_value = "4318")]
     pub port: u16,
 
-    /// Tmux session name to monitor for auto-shutdown
+    /// Tmux session name to monitor for auto-shutdown (optional for standalone mode)
     #[arg(short, long)]
-    pub session: String,
+    pub session: Option<String>,
 
     /// Path to the JSONL log file
-    #[arg(short, long)]
+    #[arg(short, long, default_value = ".axel/events.jsonl")]
     pub log: PathBuf,
 }
 
@@ -26,9 +26,17 @@ pub struct ServerArgs {
 pub async fn run(args: ServerArgs) -> Result<()> {
     let config = ServerConfig {
         port: args.port,
-        session: args.session,
+        session: args.session.unwrap_or_default(),
         log_path: args.log,
     };
+
+    eprintln!("Starting axel event server on port {}", config.port);
+    eprintln!("Logging to: {:?}", config.log_path);
+    if !config.session.is_empty() {
+        eprintln!("Monitoring tmux session: {}", config.session);
+    } else {
+        eprintln!("Running in standalone mode (no tmux session monitoring)");
+    }
 
     run_server(config).await
 }

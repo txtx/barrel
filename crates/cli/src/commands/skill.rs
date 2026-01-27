@@ -1,12 +1,12 @@
-//! Agent management commands for axel.
+//! Skill management commands for axel.
 //!
-//! This module handles all agent-related operations:
-//! - Listing agents (local and global)
-//! - Creating new agents
-//! - Importing agents from files/directories
-//! - Forking global agents to local
-//! - Linking global agents to local
-//! - Removing agents
+//! This module handles all skill-related operations:
+//! - Listing skills (local and global)
+//! - Creating new skills
+//! - Importing skills from files/directories
+//! - Forking global skills to local
+//! - Linking global skills to local
+//! - Removing skills
 
 use std::path::{Path, PathBuf};
 
@@ -20,45 +20,45 @@ use crate::{display_path, home_dir};
 // Constants
 // =============================================================================
 
-const AGENT_FILE: &str = "AGENT.md";
-const AGENTS_DIR: &str = "agents";
+const SKILL_FILE: &str = "SKILL.md";
+const SKILLS_DIR: &str = "skills";
 const AXEL_DIR: &str = "axel";
 const CONFIG_DIR: &str = ".config";
 
 // =============================================================================
-// Agent Path Helpers
+// Skill Path Helpers
 // =============================================================================
 
-fn global_agents_dir() -> Result<PathBuf> {
+fn global_skills_dir() -> Result<PathBuf> {
     Ok(home_dir()?
         .join(CONFIG_DIR)
         .join(AXEL_DIR)
-        .join(AGENTS_DIR))
+        .join(SKILLS_DIR))
 }
 
-/// Represents an agent's location in the filesystem.
+/// Represents a skill's location in the filesystem.
 ///
-/// Agents follow the convention `<base>/<name>/AGENT.md` where:
-/// - Local agents: `./agents/<name>/AGENT.md`
-/// - Global agents: `~/.config/axel/agents/<name>/AGENT.md`
-struct AgentPath {
-    /// Directory containing the AGENT.md file
+/// Skills follow the convention `<base>/<name>/SKILL.md` where:
+/// - Local skills: `./skills/<name>/SKILL.md`
+/// - Global skills: `~/.config/axel/skills/<name>/SKILL.md`
+struct SkillPath {
+    /// Directory containing the SKILL.md file
     dir: PathBuf,
-    /// Whether this is a global agent (affects display formatting)
+    /// Whether this is a global skill (affects display formatting)
     is_global: bool,
 }
 
-impl AgentPath {
+impl SkillPath {
     fn local(name: &str, base_dir: &Path) -> Self {
         Self {
-            dir: base_dir.join(AGENTS_DIR).join(name),
+            dir: base_dir.join(SKILLS_DIR).join(name),
             is_global: false,
         }
     }
 
     fn global(name: &str) -> Result<Self> {
         Ok(Self {
-            dir: global_agents_dir()?.join(name),
+            dir: global_skills_dir()?.join(name),
             is_global: true,
         })
     }
@@ -67,15 +67,15 @@ impl AgentPath {
         self.dir.exists()
     }
 
-    fn agent_file(&self) -> PathBuf {
-        self.dir.join(AGENT_FILE)
+    fn skill_file(&self) -> PathBuf {
+        self.dir.join(SKILL_FILE)
     }
 
     fn display(&self) -> String {
         if self.is_global {
             display_path(&self.dir)
         } else {
-            Path::new(AGENTS_DIR)
+            Path::new(SKILLS_DIR)
                 .join(self.dir.file_name().unwrap_or_default())
                 .display()
                 .to_string()
@@ -84,63 +84,63 @@ impl AgentPath {
 
     fn display_with_file(&self) -> String {
         if self.is_global {
-            display_path(&self.agent_file())
+            display_path(&self.skill_file())
         } else {
-            Path::new(AGENTS_DIR)
+            Path::new(SKILLS_DIR)
                 .join(self.dir.file_name().unwrap_or_default())
-                .join(AGENT_FILE)
+                .join(SKILL_FILE)
                 .display()
                 .to_string()
         }
     }
 }
 
-/// Get all global agent directories to search
-fn global_agent_dirs() -> Vec<PathBuf> {
-    global_agents_dir()
+/// Get all global skill directories to search
+fn global_skill_dirs() -> Vec<PathBuf> {
+    global_skills_dir()
         .ok()
         .filter(|p| p.exists())
         .into_iter()
         .collect()
 }
 
-/// Metadata for a discovered agent, used for listing.
-struct AgentInfo {
-    /// Agent name (directory name or file stem)
+/// Metadata for a discovered skill, used for listing.
+struct SkillInfo {
+    /// Skill name (directory name or file stem)
     name: String,
-    /// First non-empty, non-heading line from the agent file (truncated to 60 chars)
+    /// First non-empty, non-heading line from the skill file (truncated to 60 chars)
     description: String,
-    /// Full path to the agent file
+    /// Full path to the skill file
     #[allow(dead_code)]
     path: PathBuf,
     /// Location label for display (workspace name or "global")
     location: String,
 }
 
-/// Find all agents in a directory.
+/// Find all skills in a directory.
 ///
-/// Discovers agents in two formats:
-/// - Directory format: `<name>/AGENT.md`
+/// Discovers skills in two formats:
+/// - Directory format: `<name>/SKILL.md`
 /// - File format: `<name>.md` (excluding `index.md`)
-fn find_agents_in_dir(dir: &Path, location: &str) -> Vec<AgentInfo> {
-    let mut agents = Vec::new();
+fn find_skills_in_dir(dir: &Path, location: &str) -> Vec<SkillInfo> {
+    let mut skills = Vec::new();
 
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return agents,
+        Err(_) => return skills,
     };
 
     for entry in entries.flatten() {
         let path = entry.path();
 
-        let (agent_name, agent_path) = if path.is_dir() {
-            let agent_file = path.join("AGENT.md");
-            if agent_file.exists() {
+        let (skill_name, skill_path) = if path.is_dir() {
+            let skill_file = path.join("SKILL.md");
+            if skill_file.exists() {
                 let name = path
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
-                (name, agent_file)
+                (name, skill_file)
             } else {
                 continue;
             }
@@ -157,11 +157,11 @@ fn find_agents_in_dir(dir: &Path, location: &str) -> Vec<AgentInfo> {
             continue;
         };
 
-        if agent_name.is_empty() {
+        if skill_name.is_empty() {
             continue;
         }
 
-        let description = std::fs::read_to_string(&agent_path)
+        let description = std::fs::read_to_string(&skill_path)
             .ok()
             .and_then(|content| {
                 let content = if content.starts_with("---") {
@@ -193,23 +193,23 @@ fn find_agents_in_dir(dir: &Path, location: &str) -> Vec<AgentInfo> {
             })
             .unwrap_or_else(|| "No description".to_string());
 
-        agents.push(AgentInfo {
-            name: agent_name,
+        skills.push(SkillInfo {
+            name: skill_name,
             description,
-            path: agent_path,
+            path: skill_path,
             location: location.to_string(),
         });
     }
 
-    agents
+    skills
 }
 
 // =============================================================================
 // Public Commands
 // =============================================================================
 
-/// Clean up installed agent symlinks for all drivers
-pub fn cleanup_agents(workspace_dir: &Path) -> Vec<&'static str> {
+/// Clean up installed skill symlinks for all drivers
+pub fn cleanup_skills(workspace_dir: &Path) -> Vec<&'static str> {
     let mut cleaned = Vec::new();
 
     for driver in drivers::all_drivers() {
@@ -232,16 +232,16 @@ pub fn format_cleaned_drivers(cleaned: &[&str]) -> String {
     }
 }
 
-/// List all available agents (local and global)
-pub fn list_agents(manifest_path: &Path, base_dir: &Path) -> Result<()> {
-    let mut all_agents: Vec<AgentInfo> = Vec::new();
+/// List all available skills (local and global)
+pub fn list_skills(manifest_path: &Path, base_dir: &Path) -> Result<()> {
+    let mut all_skills: Vec<SkillInfo> = Vec::new();
     let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    let global_dir = global_agents_dir().ok();
+    let global_dir = global_skills_dir().ok();
 
-    let agent_sources: Vec<(PathBuf, String)> = if manifest_path.exists() {
+    let skill_sources: Vec<(PathBuf, String)> = if manifest_path.exists() {
         let cfg = load_config(manifest_path)?;
-        cfg.agents_dirs()
+        cfg.skills_dirs()
             .into_iter()
             .map(|dir| {
                 let name = if dir.starts_with(base_dir) {
@@ -259,7 +259,7 @@ pub fn list_agents(manifest_path: &Path, base_dir: &Path) -> Result<()> {
             .collect()
     } else {
         let mut sources = Vec::new();
-        let local_dir = base_dir.join(AGENTS_DIR);
+        let local_dir = base_dir.join(SKILLS_DIR);
         if local_dir.exists() {
             let name = base_dir
                 .file_name()
@@ -267,23 +267,23 @@ pub fn list_agents(manifest_path: &Path, base_dir: &Path) -> Result<()> {
                 .unwrap_or_else(|| "local".to_string());
             sources.push((local_dir, name));
         }
-        for dir in global_agent_dirs() {
+        for dir in global_skill_dirs() {
             sources.push((dir, "global".to_string()));
         }
         sources
     };
 
-    for (dir, location) in &agent_sources {
-        for agent in find_agents_in_dir(dir, location) {
-            if !seen_names.contains(&agent.name) {
-                seen_names.insert(agent.name.clone());
-                all_agents.push(agent);
+    for (dir, location) in &skill_sources {
+        for skill in find_skills_in_dir(dir, location) {
+            if !seen_names.contains(&skill.name) {
+                seen_names.insert(skill.name.clone());
+                all_skills.push(skill);
             }
         }
     }
 
-    if all_agents.is_empty() {
-        println!("{}", "No agents found".dimmed());
+    if all_skills.is_empty() {
+        println!("{}", "No skills found".dimmed());
         return Ok(());
     }
 
@@ -297,17 +297,17 @@ pub fn list_agents(manifest_path: &Path, base_dir: &Path) -> Result<()> {
     let mut table = Table::new();
     table.load_preset(NOTHING);
 
-    for agent in &all_agents {
-        let location = if agent.location == workspace_name {
-            agent.location.yellow().to_string()
+    for skill in &all_skills {
+        let location = if skill.location == workspace_name {
+            skill.location.yellow().to_string()
         } else {
-            agent.location.purple().to_string()
+            skill.location.purple().to_string()
         };
 
         table.add_row(vec![
-            agent.name.green().to_string(),
+            skill.name.green().to_string(),
             location,
-            agent.description.dimmed().to_string(),
+            skill.description.dimmed().to_string(),
         ]);
     }
 
@@ -316,49 +316,49 @@ pub fn list_agents(manifest_path: &Path, base_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Create a new agent interactively
-pub fn new_agent(name: Option<&str>, base_dir: &Path) -> Result<()> {
+/// Create a new skill interactively
+pub fn new_skill(name: Option<&str>, base_dir: &Path) -> Result<()> {
     use dialoguer::{Input, Select, theme::ColorfulTheme};
 
     let theme = ColorfulTheme::default();
 
-    let agent_name: String = match name {
+    let skill_name: String = match name {
         Some(n) => n.to_string(),
         None => Input::with_theme(&theme)
-            .with_prompt("Agent name")
+            .with_prompt("Skill name")
             .interact_text()?,
     };
 
-    let local = AgentPath::local(&agent_name, base_dir);
-    let global = AgentPath::global(&agent_name)?;
+    let local = SkillPath::local(&skill_name, base_dir);
+    let global = SkillPath::global(&skill_name)?;
 
     let options = [
         format!("Local ({})", local.display()),
         format!("Global ({})", global.display()),
     ];
     let selection = Select::with_theme(&theme)
-        .with_prompt("Where should this agent be created?")
+        .with_prompt("Where should this skill be created?")
         .items(&options)
         .default(0)
         .interact()?;
 
-    let agent = match selection {
+    let skill = match selection {
         0 => local,
         1 => global,
         _ => unreachable!(),
     };
 
-    if agent.exists() {
+    if skill.exists() {
         let collision_options = ["Replace", "Cancel"];
         let collision_selection = Select::with_theme(&theme)
-            .with_prompt(format!("Agent '{}' already exists", agent_name))
+            .with_prompt(format!("Skill '{}' already exists", skill_name))
             .items(&collision_options)
             .default(1)
             .interact()?;
 
         match collision_selection {
             0 => {
-                std::fs::remove_dir_all(&agent.dir)?;
+                std::fs::remove_dir_all(&skill.dir)?;
             }
             1 => {
                 println!("{}", "Cancelled".dimmed());
@@ -368,45 +368,45 @@ pub fn new_agent(name: Option<&str>, base_dir: &Path) -> Result<()> {
         }
     }
 
-    std::fs::create_dir_all(&agent.dir)?;
+    std::fs::create_dir_all(&skill.dir)?;
 
     let content = format!(
         r#"---
 name: {name}
-description: Describe what this agent does
+description: Describe what this skill does
 ---
 
 # {name}
 
-You are a {name} agent.
+You are a {name} skill.
 
 ## Guidelines
 
 - Add your guidelines here
 "#,
-        name = agent_name
+        name = skill_name
     );
-    let agent_file = agent.agent_file();
+    let skill_file = skill.skill_file();
 
-    std::fs::write(&agent_file, content)?;
+    std::fs::write(&skill_file, content)?;
 
     println!(
         "{} {} {}",
         "✔".green(),
         "Created".dimmed(),
-        agent.display_with_file()
+        skill.display_with_file()
     );
 
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "code".to_string());
     std::process::Command::new(editor)
-        .arg(&agent_file)
+        .arg(&skill_file)
         .status()?;
 
     Ok(())
 }
 
-/// Import agent file(s) to the global agents directory
-pub fn import_agent(path: &str) -> Result<()> {
+/// Import skill file(s) to the global skills directory
+pub fn import_skill(path: &str) -> Result<()> {
     // Expand ~ to home directory
     let expanded_path = if let Some(rest) = path.strip_prefix("~/") {
         home_dir()?.join(rest)
@@ -443,7 +443,7 @@ pub fn import_agent(path: &str) -> Result<()> {
 
             // Import .md files
             if entry_path.is_file() && entry_path.extension().map(|e| e == "md").unwrap_or(false) {
-                import_single_agent(&entry_path)?;
+                import_single_skill(&entry_path)?;
                 count += 1;
             }
         }
@@ -457,47 +457,47 @@ pub fn import_agent(path: &str) -> Result<()> {
     }
 
     // Single file import
-    import_single_agent(&expanded_path)
+    import_single_skill(&expanded_path)
 }
 
-fn import_single_agent(source_path: &Path) -> Result<()> {
-    // Derive agent name from path
-    let agent_name = if source_path
+fn import_single_skill(source_path: &Path) -> Result<()> {
+    // Derive skill name from path
+    let skill_name = if source_path
         .file_name()
-        .map(|n| n == "AGENT.md")
+        .map(|n| n == "SKILL.md")
         .unwrap_or(false)
     {
-        // Use parent directory name for AGENT.md files
+        // Use parent directory name for SKILL.md files
         source_path
             .parent()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "agent".to_string())
+            .unwrap_or_else(|| "skill".to_string())
     } else {
         // Use filename without extension
         source_path
             .file_stem()
             .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "agent".to_string())
+            .unwrap_or_else(|| "skill".to_string())
     };
 
     // Skip index.md
-    if agent_name == "index" {
+    if skill_name == "index" {
         return Ok(());
     }
 
-    // Create target directory in global agents
-    let global_agents_dir = home_dir()?.join(".config/axel/agents");
-    let target_dir = global_agents_dir.join(&agent_name);
-    let target_file = target_dir.join("AGENT.md");
+    // Create target directory in global skills
+    let global_skills_dir = home_dir()?.join(".config/axel/skills");
+    let target_dir = global_skills_dir.join(&skill_name);
+    let target_file = target_dir.join("SKILL.md");
 
     if target_dir.exists() {
-        // Silently skip existing agents when importing from directory
+        // Silently skip existing skills when importing from directory
         println!(
-            "{} {} {}/AGENT.md (already exists)",
+            "{} {} {}/SKILL.md (already exists)",
             "-".dimmed(),
             "Skipped".dimmed(),
-            agent_name
+            skill_name
         );
         return Ok(());
     }
@@ -506,37 +506,37 @@ fn import_single_agent(source_path: &Path) -> Result<()> {
     std::fs::copy(source_path, &target_file)?;
 
     println!(
-        "{} {} {}/AGENT.md",
+        "{} {} {}/SKILL.md",
         "✔".green(),
         "Imported".dimmed(),
-        agent_name
+        skill_name
     );
 
     Ok(())
 }
 
-/// Fork (copy) a global agent to the current workspace
-pub fn fork_agent(name: &str, manifest_path: &Path, base_dir: &Path) -> Result<()> {
-    let global = AgentPath::global(name)?;
-    let local = AgentPath::local(name, base_dir);
+/// Fork (copy) a global skill to the current workspace
+pub fn fork_skill(name: &str, manifest_path: &Path, base_dir: &Path) -> Result<()> {
+    let global = SkillPath::global(name)?;
+    let local = SkillPath::local(name, base_dir);
 
     if !global.exists() {
-        eprintln!("{}", format!("Global agent '{}' not found", name).red());
+        eprintln!("{}", format!("Global skill '{}' not found", name).red());
         eprintln!();
-        let _ = list_agents(manifest_path, base_dir);
+        let _ = list_skills(manifest_path, base_dir);
         std::process::exit(1);
     }
 
     if local.exists() {
         eprintln!(
             "{}",
-            format!("Agent '{}' already exists in workspace", name).red()
+            format!("Skill '{}' already exists in workspace", name).red()
         );
         std::process::exit(1);
     }
 
     std::fs::create_dir_all(&local.dir)?;
-    std::fs::copy(global.agent_file(), local.agent_file())?;
+    std::fs::copy(global.skill_file(), local.skill_file())?;
 
     println!(
         "{} {} {}",
@@ -548,27 +548,27 @@ pub fn fork_agent(name: &str, manifest_path: &Path, base_dir: &Path) -> Result<(
     Ok(())
 }
 
-/// Link (symlink) a global agent to the current workspace
-pub fn link_agent(name: &str, manifest_path: &Path, base_dir: &Path) -> Result<()> {
-    let global = AgentPath::global(name)?;
-    let local = AgentPath::local(name, base_dir);
+/// Link (symlink) a global skill to the current workspace
+pub fn link_skill(name: &str, manifest_path: &Path, base_dir: &Path) -> Result<()> {
+    let global = SkillPath::global(name)?;
+    let local = SkillPath::local(name, base_dir);
 
     if !global.exists() {
-        eprintln!("{}", format!("Global agent '{}' not found", name).red());
+        eprintln!("{}", format!("Global skill '{}' not found", name).red());
         eprintln!();
-        let _ = list_agents(manifest_path, base_dir);
+        let _ = list_skills(manifest_path, base_dir);
         std::process::exit(1);
     }
 
     if local.exists() {
         eprintln!(
             "{}",
-            format!("Agent '{}' already exists in workspace", name).red()
+            format!("Skill '{}' already exists in workspace", name).red()
         );
         std::process::exit(1);
     }
 
-    std::fs::create_dir_all(base_dir.join(AGENTS_DIR))?;
+    std::fs::create_dir_all(base_dir.join(SKILLS_DIR))?;
 
     #[cfg(unix)]
     std::os::unix::fs::symlink(&global.dir, &local.dir)?;
@@ -587,23 +587,23 @@ pub fn link_agent(name: &str, manifest_path: &Path, base_dir: &Path) -> Result<(
     Ok(())
 }
 
-/// Remove an agent
-pub fn rm_agent(name: &str, manifest_path: &Path, base_dir: &Path) -> Result<()> {
+/// Remove a skill
+pub fn rm_skill(name: &str, manifest_path: &Path, base_dir: &Path) -> Result<()> {
     use dialoguer::{Confirm, Select, theme::ColorfulTheme};
 
     let theme = ColorfulTheme::default();
 
-    let local = AgentPath::local(name, base_dir);
-    let global = AgentPath::global(name)?;
+    let local = SkillPath::local(name, base_dir);
+    let global = SkillPath::global(name)?;
 
-    let agent_to_remove = if local.exists() && global.exists() {
+    let skill_to_remove = if local.exists() && global.exists() {
         let options = [
             format!("Local ({})", local.display()),
             format!("Global ({})", global.display()),
         ];
         let selection = Select::with_theme(&theme)
             .with_prompt(format!(
-                "Agent '{}' exists in both locations. Which one to remove?",
+                "Skill '{}' exists in both locations. Which one to remove?",
                 name
             ))
             .items(&options)
@@ -620,14 +620,14 @@ pub fn rm_agent(name: &str, manifest_path: &Path, base_dir: &Path) -> Result<()>
     } else if global.exists() {
         global
     } else {
-        eprintln!("{}", format!("Agent '{}' not found", name).red());
+        eprintln!("{}", format!("Skill '{}' not found", name).red());
         eprintln!();
-        let _ = list_agents(manifest_path, base_dir);
+        let _ = list_skills(manifest_path, base_dir);
         std::process::exit(1);
     };
 
     let confirmed = Confirm::with_theme(&theme)
-        .with_prompt(format!("Remove {}?", agent_to_remove.display()))
+        .with_prompt(format!("Remove {}?", skill_to_remove.display()))
         .default(false)
         .interact()?;
 
@@ -636,12 +636,12 @@ pub fn rm_agent(name: &str, manifest_path: &Path, base_dir: &Path) -> Result<()>
         return Ok(());
     }
 
-    std::fs::remove_dir_all(&agent_to_remove.dir)?;
+    std::fs::remove_dir_all(&skill_to_remove.dir)?;
     println!(
         "{} {} {}",
         "✔".green(),
         "Removed".dimmed(),
-        agent_to_remove.display()
+        skill_to_remove.display()
     );
 
     Ok(())

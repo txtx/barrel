@@ -2,7 +2,7 @@
 //!
 //! This module provides high-level workspace creation using tmux sessions.
 //! It handles the complex layout algorithm for arranging panes in a grid,
-//! installing agents for each AI tool, and configuring tmux with axel styling.
+//! installing skills for each AI tool, and configuring tmux with axel styling.
 //!
 //! # Layout Algorithm
 //!
@@ -17,7 +17,7 @@
 //! - Mouse support with clipboard integration
 //! - Pane border titles showing shell names
 //! - Color-coded panes based on shell configuration
-//! - Automatic agent installation per driver type
+//! - Automatic skill installation per driver type
 //! - Manifest path stored in session environment for cleanup
 
 use std::{collections::HashMap, io::Write};
@@ -126,7 +126,7 @@ fn build_ai_command(
 /// Build the command string for Antigravity CLI.
 ///
 /// Antigravity is Google's AI coding assistant. It automatically discovers
-/// project rules from `.antigravity/rules.md` (where axel installs agents).
+/// project rules from `.antigravity/rules.md` (where axel installs skills).
 ///
 /// The CLI interface supports:
 /// - `-m` for model selection
@@ -163,7 +163,7 @@ fn build_antigravity_command(config: &AiShellConfig, index: Option<&WorkspaceInd
 /// - Initial prompt is passed as a positional argument
 ///
 /// The command includes `-c 'project_doc_fallback_filenames=[".codex/AGENTS.md"]'`
-/// to ensure Codex discovers the merged agents file created by the driver.
+/// to ensure Codex discovers the merged skills file created by the driver.
 fn build_codex_command(
     config: &AiShellConfig,
     _workspace_dir: Option<&std::path::Path>,
@@ -216,7 +216,7 @@ pub fn build_pane_command(
 /// This is the main entry point for workspace creation. It:
 ///
 /// 1. **Resolves panes** from the profile configuration
-/// 2. **Installs agents** for each AI driver (Claude, Codex, OpenCode)
+/// 2. **Installs skills** for each AI driver (Claude, Codex, OpenCode)
 /// 3. **Creates the tmux session** with the first pane
 /// 4. **Configures session options** (mouse, clipboard, styling)
 /// 5. **Builds the grid layout** via horizontal/vertical splits
@@ -238,70 +238,80 @@ pub fn create_workspace(
         anyhow::bail!("No panes defined");
     }
 
-    // Collect agent names per driver type from AI panes
-    let mut claude_agents: Vec<String> = Vec::new();
-    let mut codex_agents: Vec<String> = Vec::new();
-    let mut opencode_agents: Vec<String> = Vec::new();
-    let mut antigravity_agents: Vec<String> = Vec::new();
+    // Collect skill names per driver type from AI panes
+    let mut claude_skills: Vec<String> = Vec::new();
+    let mut codex_skills: Vec<String> = Vec::new();
+    let mut opencode_skills: Vec<String> = Vec::new();
+    let mut antigravity_skills: Vec<String> = Vec::new();
 
     for pane in &panes {
         match &pane.config {
-            ShellConfig::Claude(c) => claude_agents.extend(c.agents.iter().cloned()),
-            ShellConfig::Codex(c) => codex_agents.extend(c.agents.iter().cloned()),
-            ShellConfig::Opencode(c) => opencode_agents.extend(c.agents.iter().cloned()),
-            ShellConfig::Antigravity(c) => antigravity_agents.extend(c.agents.iter().cloned()),
+            ShellConfig::Claude(c) => claude_skills.extend(c.skills.iter().cloned()),
+            ShellConfig::Codex(c) => codex_skills.extend(c.skills.iter().cloned()),
+            ShellConfig::Opencode(c) => opencode_skills.extend(c.skills.iter().cloned()),
+            ShellConfig::Antigravity(c) => antigravity_skills.extend(c.skills.iter().cloned()),
             ShellConfig::Custom(_) => {}
         }
     }
-    claude_agents.dedup();
-    codex_agents.dedup();
-    opencode_agents.dedup();
-    antigravity_agents.dedup();
+    claude_skills.dedup();
+    codex_skills.dedup();
+    opencode_skills.dedup();
+    antigravity_skills.dedup();
 
-    // Install agents for each driver that has panes
+    // Install skills for each driver that has panes
     if let Some(ref workspace_dir) = workspace_dir {
-        for (driver_name, agent_names) in [
-            ("claude", &claude_agents),
-            ("codex", &codex_agents),
-            ("opencode", &opencode_agents),
-            ("antigravity", &antigravity_agents),
+        for (driver_name, skill_names) in [
+            ("claude", &claude_skills),
+            ("codex", &codex_skills),
+            ("opencode", &opencode_skills),
+            ("antigravity", &antigravity_skills),
         ] {
-            if agent_names.is_empty() {
+            if skill_names.is_empty() {
                 continue;
             }
             let Some(driver) = drivers::get_driver(driver_name) else {
                 continue;
             };
-            let agent_paths = config.resolve_agents(agent_names);
+            let skill_paths = config.resolve_skills(skill_names);
 
             if let Some(count) = driver
-                .install_agents(workspace_dir, &agent_paths)
+                .install_skills(workspace_dir, &skill_paths)
                 .ok()
                 .filter(|&c| c > 0)
             {
-                let agents_word = if count == 1 { "agent" } else { "agents" };
+                let skills_word = if count == 1 { "skill" } else { "skills" };
                 eprintln!(
                     "{} {} {} {} for {}",
                     "✔".green(),
                     "Installed".dimmed(),
                     count,
-                    agents_word,
+                    skills_word,
                     driver.name()
                 );
             }
         }
 
-        // Install CLAUDE.md symlink pointing to agents/index.md if present
-        let has_claude_panes = panes
+        // Install index files (CLAUDE.md, AGENTS.md, etc.) for each driver type with panes
+        let driver_names: Vec<&str> = panes
             .iter()
-            .any(|p| matches!(p.config, ShellConfig::Claude(_)));
-        if has_claude_panes {
-            let claude_driver = drivers::ClaudeDriver;
-            if claude_driver
-                .install_index(config, workspace_dir)
-                .unwrap_or(false)
-            {
-                eprintln!("{} {} CLAUDE.md symlink", "✔".green(), "Created".dimmed());
+            .filter_map(|p| match &p.config {
+                ShellConfig::Claude(_) => Some("claude"),
+                ShellConfig::Codex(_) => Some("codex"),
+                ShellConfig::Opencode(_) => Some("opencode"),
+                ShellConfig::Antigravity(_) => Some("antigravity"),
+                ShellConfig::Custom(_) => None,
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        for driver_name in driver_names {
+            if let Some(driver) = drivers::get_driver(driver_name) {
+                if let Some(filename) = driver.index_filename() {
+                    if driver.install_index(config, workspace_dir).unwrap_or(false) {
+                        eprintln!("{} {} {} symlink", "✔".green(), "Created".dimmed(), filename);
+                    }
+                }
             }
         }
     }

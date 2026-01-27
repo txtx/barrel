@@ -14,9 +14,9 @@ workspace: axel
 # Search paths for agent files (first match wins for duplicate names)
 # Supports: ./relative, ~/home, /absolute paths
 
-agents:
-  - path: ./agents
-  - path: ~/.config/axel/agents
+skills:
+  - path: ./skills
+  - path: ~/.config/axel/skills
 
 # =============================================================================
 # Shell definitions
@@ -30,7 +30,7 @@ shells:
   # Claude Code - AI coding assistant
   - type: claude
     color: gray
-    agents:
+    skills:
       - "*"                    # Load all agents, or list specific: ["agent1", "agent2"]
     # model: sonnet            # Model: sonnet, opus, haiku
     # prompt: "Your task..."   # Initial prompt
@@ -39,10 +39,10 @@ shells:
     # args: []                 # Additional CLI arguments
 
   # Codex - OpenAI coding assistant
-  # - type: codex
-  #   color: green
-  #   agents: ["*"]
-  #   # model: gpt-4           # Model to use
+  - type: codex
+    color: green
+    skills: ["*"]
+    # model: gpt-4           # Model to use
 
   # OpenCode - Open-source coding assistant
   # - type: opencode

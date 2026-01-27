@@ -11,14 +11,16 @@ pub use events::{HookEvent, HookEventType, OtelEventType, OutboxResponse, Outbox
 pub use logger::EventLogger;
 pub use routes::{AppState, create_router};
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, watch, RwLock};
 
 /// Configuration for the event server
 #[derive(Debug, Clone)]
@@ -60,6 +62,7 @@ pub async fn run_server(config: ServerConfig) -> Result<()> {
         event_tx: logger.sender(),
         inbox_tx,
         tmux_session,
+        session_to_pane: Arc::new(RwLock::new(HashMap::new())),
     };
 
     // Build the router

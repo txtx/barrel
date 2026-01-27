@@ -3,19 +3,23 @@
 //! This crate provides the core functionality for axel including:
 //! - Configuration parsing and types
 //! - Tmux session management
-//! - Agent driver implementations
+//! - Skill driver implementations
 //! - Claude command building
 //! - Git worktree management
+//! - Claude hooks configuration
 
 pub mod claude;
 pub mod config;
 pub mod drivers;
 pub mod git;
+pub mod hooks;
+pub mod server;
 pub mod tmux;
 
 // Re-export commonly used types at crate root
 pub use config::{
-    Agent, AgentPathConfig, AiShellConfig, CustomShellConfig, Profile, ProfilePane, ProfileType,
+    Skill, SkillPathConfig, AiShellConfig, CustomShellConfig, Profile, ProfilePane, ProfileType,
     ResolvedPane, ShellConfig, TerminalConfig, WorkspaceConfig, WorkspaceIndex,
 };
-pub use drivers::{AgentDriver, ClaudeDriver, CodexDriver, OpenCodeDriver, all_agent_patterns};
+pub use drivers::{SkillDriver, ClaudeDriver, CodexDriver, OpenCodeDriver, all_skill_patterns};
+pub use hooks::{generate_hooks_settings, otel_logs_endpoint, otel_metrics_endpoint, otel_traces_endpoint, settings_path, write_settings};
