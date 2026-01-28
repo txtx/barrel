@@ -7,20 +7,21 @@ mod events;
 mod logger;
 mod routes;
 
-pub use events::{HookEvent, HookEventType, OtelEventType, OutboxResponse, OutboxResponseType, TimestampedEvent};
-pub use logger::EventLogger;
-pub use routes::{AppState, create_router};
-
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::process::Command;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    collections::HashMap, net::SocketAddr, path::PathBuf, process::Command, sync::Arc,
+    time::Duration,
+};
 
 use anyhow::Result;
-use tokio::net::TcpListener;
-use tokio::sync::{broadcast, watch, RwLock};
+pub use events::{
+    HookEvent, HookEventType, OtelEventType, OutboxResponse, OutboxResponseType, TimestampedEvent,
+};
+pub use logger::EventLogger;
+pub use routes::{AppState, create_router};
+use tokio::{
+    net::TcpListener,
+    sync::{RwLock, broadcast, watch},
+};
 
 /// Configuration for the event server
 #[derive(Debug, Clone)]

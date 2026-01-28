@@ -309,7 +309,12 @@ pub fn create_workspace(
             if let Some(driver) = drivers::get_driver(driver_name) {
                 if let Some(filename) = driver.index_filename() {
                     if driver.install_index(config, workspace_dir).unwrap_or(false) {
-                        eprintln!("{} {} {} symlink", "✔".green(), "Created".dimmed(), filename);
+                        eprintln!(
+                            "{} {} {} symlink",
+                            "✔".green(),
+                            "Created".dimmed(),
+                            filename
+                        );
                     }
                 }
             }

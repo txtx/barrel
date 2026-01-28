@@ -106,6 +106,21 @@ pub struct Cli {
     #[arg(long = "prune", requires = "kill")]
     pub prune_worktree: bool,
 
+    /// Launch the shell inside a new tmux session.
+    ///
+    /// When used with a shell name (e.g., `axel claude --tmux`), creates a tmux
+    /// session for that shell. The session name is auto-generated or can be
+    /// specified with --session-name.
+    #[arg(long = "tmux")]
+    pub tmux: bool,
+
+    /// Name for the tmux session (used with --tmux).
+    ///
+    /// If not specified, a name is generated: `{workspace}-{shell}-{index}`
+    /// where index increments to avoid collisions.
+    #[arg(long = "session-name", value_name = "NAME", requires = "tmux")]
+    pub session_name: Option<String>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -268,7 +283,12 @@ pub enum SessionCommands {
     /// session, and cleans up skill symlinks.
     Kill {
         /// Name of the session to kill (uses current session if omitted)
+        #[arg(conflicts_with = "all")]
         name: Option<String>,
+
+        /// Kill all running axel sessions
+        #[arg(long, short = 'a')]
+        all: bool,
 
         /// Keep skill symlinks instead of cleaning them up
         #[arg(long)]

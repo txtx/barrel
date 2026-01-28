@@ -9,8 +9,10 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use super::SkillDriver;
-use crate::config::WorkspaceConfig;
-use crate::hooks::{otel_metrics_endpoint, otel_traces_endpoint};
+use crate::{
+    config::WorkspaceConfig,
+    hooks::{otel_metrics_endpoint, otel_traces_endpoint},
+};
 
 /// Helper to create index file symlink (e.g., CLAUDE.md, AGENTS.md) pointing to AXEL.md
 pub(super) fn install_index_symlink(
@@ -153,8 +155,9 @@ impl SkillDriver for ClaudeDriver {
         vec![
             // Required: Enable telemetry
             ("CLAUDE_CODE_ENABLE_TELEMETRY".to_string(), "1".to_string()),
-            // Required: Enable OTLP exporter for metrics
+            // Required: Enable OTLP exporter for metrics and traces
             ("OTEL_METRICS_EXPORTER".to_string(), "otlp".to_string()),
+            ("OTEL_TRACES_EXPORTER".to_string(), "otlp".to_string()),
             // Use HTTP JSON protocol (our server accepts this)
             (
                 "OTEL_EXPORTER_OTLP_PROTOCOL".to_string(),
@@ -169,8 +172,14 @@ impl SkillDriver for ClaudeDriver {
                 "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT".to_string(),
                 otel_traces_endpoint(port, pane_id),
             ),
-            // Faster export interval (10 seconds instead of default 60)
-            ("OTEL_METRIC_EXPORT_INTERVAL".to_string(), "10000".to_string()),
+            // Faster export intervals (10 seconds instead of default 60)
+            // OTEL_METRIC_EXPORT_INTERVAL - periodic metric reader export interval (ms)
+            (
+                "OTEL_METRIC_EXPORT_INTERVAL".to_string(),
+                "10000".to_string(),
+            ),
+            // OTEL_BSP_SCHEDULE_DELAY - batch span processor schedule delay (ms)
+            ("OTEL_BSP_SCHEDULE_DELAY".to_string(), "10000".to_string()),
         ]
     }
 

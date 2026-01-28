@@ -226,9 +226,9 @@ impl WorkspaceConfig {
     /// Reads the content after the YAML frontmatter from the manifest file.
     /// This content is used as initial context for AI assistants.
     pub fn load_index(&self) -> Option<WorkspaceIndex> {
-        self.manifest_path.as_ref().and_then(|path| {
-            WorkspaceIndex::from_manifest(path, &self.workspace).ok()
-        })
+        self.manifest_path
+            .as_ref()
+            .and_then(|path| WorkspaceIndex::from_manifest(path, &self.workspace).ok())
     }
 
     /// Get the profile type for a given profile name (defaults to "default")

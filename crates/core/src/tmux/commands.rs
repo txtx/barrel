@@ -179,6 +179,7 @@ pub struct NewSession<'a> {
     detached: bool,
     start_dir: Option<&'a str>,
     window_name: Option<&'a str>,
+    shell_command: Option<&'a str>,
 }
 
 #[allow(dead_code)]
@@ -212,6 +213,12 @@ impl<'a> NewSession<'a> {
         self
     }
 
+    /// Set the shell command to run in the session
+    pub fn shell_command(mut self, cmd: &'a str) -> Self {
+        self.shell_command = Some(cmd);
+        self
+    }
+
     /// Execute the new-session command
     pub fn run(self) -> Result<()> {
         let mut args = vec!["new-session"];
@@ -233,6 +240,11 @@ impl<'a> NewSession<'a> {
         if let Some(name) = self.window_name {
             args.push("-n");
             args.push(name);
+        }
+
+        // Shell command must come last
+        if let Some(cmd) = self.shell_command {
+            args.push(cmd);
         }
 
         tmux_run(&args)

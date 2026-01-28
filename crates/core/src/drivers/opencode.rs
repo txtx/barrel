@@ -12,8 +12,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::claude::install_index_symlink;
-use super::SkillDriver;
+use super::{SkillDriver, claude::install_index_symlink};
 use crate::config::WorkspaceConfig;
 
 /// OpenCode skill driver

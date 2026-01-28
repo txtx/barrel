@@ -30,10 +30,7 @@ const CONFIG_DIR: &str = ".config";
 // =============================================================================
 
 fn global_skills_dir() -> Result<PathBuf> {
-    Ok(home_dir()?
-        .join(CONFIG_DIR)
-        .join(AXEL_DIR)
-        .join(SKILLS_DIR))
+    Ok(home_dir()?.join(CONFIG_DIR).join(AXEL_DIR).join(SKILLS_DIR))
 }
 
 /// Represents a skill's location in the filesystem.

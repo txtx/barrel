@@ -12,13 +12,12 @@ use axel_core::{
     ProfileType, ShellConfig,
     claude::ClaudeCommand,
     config::{expand_path, load_config},
-    drivers,
-    git,
-    generate_hooks_settings, settings_path, write_settings,
+    drivers, generate_hooks_settings, git, settings_path,
     tmux::{
-        AXEL_MANIFEST_ENV, attach_session, create_workspace as tmux_create_workspace,
-        detach_session, get_environment, has_session, kill_session, list_sessions,
+        AXEL_MANIFEST_ENV, NewSession, attach_session, create_workspace as tmux_create_workspace,
+        detach_session, get_environment, has_session, kill_session, list_sessions, set_environment,
     },
+    write_settings,
 };
 use colored::Colorize;
 
@@ -84,6 +83,77 @@ pub fn do_list_sessions(axel_only: bool) -> Result<()> {
 // =============================================================================
 // Session Killing
 // =============================================================================
+
+/// Kill all running axel sessions.
+pub fn do_kill_all_sessions(
+    _workspaces_dir: &Path,
+    keep_skills: bool,
+    skip_confirm: bool,
+) -> Result<()> {
+    let sessions = list_sessions(true)?; // true = axel_only
+
+    if sessions.is_empty() {
+        println!("{}", "No axel sessions running".dimmed());
+        return Ok(());
+    }
+
+    println!(
+        "{} {} axel session(s) running:",
+        "Found".dimmed(),
+        sessions.len()
+    );
+    for session in &sessions {
+        let attached = if session.attached { " (attached)" } else { "" };
+        println!(
+            "  {} {}{}",
+            "-".dimmed(),
+            session.name.blue(),
+            attached.dimmed()
+        );
+    }
+    println!();
+
+    if !skip_confirm {
+        use dialoguer::{Confirm, theme::ColorfulTheme};
+        let theme = ColorfulTheme::default();
+        let confirmed = Confirm::with_theme(&theme)
+            .with_prompt(format!("Kill all {} session(s)?", sessions.len()))
+            .default(false)
+            .interact()?;
+
+        if !confirmed {
+            println!("{}", "Cancelled".dimmed());
+            return Ok(());
+        }
+    }
+
+    let mut killed = 0;
+    for session in &sessions {
+        // Detach clients first to avoid issues
+        detach_session(&session.name)?;
+
+        // Clean up skills if not keeping them
+        if !keep_skills {
+            if let Some(ref working_dir) = session.working_dir {
+                let dir = PathBuf::from(working_dir);
+                cleanup_skills(&dir);
+            }
+        }
+
+        // Kill the session
+        if kill_session(&session.name).is_ok() {
+            killed += 1;
+            println!("{} {} {}", "✔".green(), "Killed".dimmed(), session.name);
+        } else {
+            eprintln!("{} Failed to kill {}", "✘".red(), session.name);
+        }
+    }
+
+    println!();
+    println!("{} {} session(s)", "Killed".green(), killed);
+
+    Ok(())
+}
 
 /// Kill a workspace session with optional cleanup.
 pub fn do_kill_workspace(
@@ -311,7 +381,12 @@ fn launch_shell_mode(config: &axel_core::WorkspaceConfig, profile: Option<&str>)
         if let Some(driver) = drivers::get_driver(driver_name) {
             if let Some(filename) = driver.index_filename() {
                 if driver.install_index(config, workspace_dir).unwrap_or(false) {
-                    eprintln!("{} {} {} symlink", "✔".green(), "Created".dimmed(), filename);
+                    eprintln!(
+                        "{} {} {} symlink",
+                        "✔".green(),
+                        "Created".dimmed(),
+                        filename
+                    );
                 }
             }
         }
@@ -340,6 +415,8 @@ pub fn launch_shell_by_name(
     prompt_override: Option<&str>,
     pane_id: Option<&str>,
     server_port: Option<u16>,
+    use_tmux: bool,
+    session_name: Option<&str>,
 ) -> Result<()> {
     // Use provided port or default to 4318
     let port = server_port.unwrap_or(4318);
@@ -406,7 +483,12 @@ pub fn launch_shell_by_name(
         if let Some(driver) = drivers::get_driver(driver_name) {
             if let Some(filename) = driver.index_filename() {
                 if driver.install_index(&config, install_dir).unwrap_or(false) {
-                    eprintln!("{} {} {} symlink", "✔".green(), "Created".dimmed(), filename);
+                    eprintln!(
+                        "{} {} {} symlink",
+                        "✔".green(),
+                        "Created".dimmed(),
+                        filename
+                    );
                 }
             }
         }
@@ -439,6 +521,94 @@ pub fn launch_shell_by_name(
         ShellConfig::Antigravity(_) => "antigravity",
         ShellConfig::Custom(_) => "",
     };
+
+    // If --tmux is specified, create a tmux session instead of running directly
+    if use_tmux {
+        let base_cmd =
+            command.unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string()));
+
+        // Generate session name if not provided
+        let session = if let Some(name) = session_name {
+            name.to_string()
+        } else {
+            generate_session_name(&config.workspace, shell_name)
+        };
+
+        // Build command with OTEL env vars if driver supports it and server is running
+        let cmd = if server_port.is_some() {
+            if let Some(driver) = drivers::get_driver(driver_name) {
+                if driver.supports_otel() {
+                    // Use session name as pane_id for OTEL
+                    let otel_vars = driver.otel_env_vars(port, &session);
+                    if !otel_vars.is_empty() {
+                        let env_prefix: String = otel_vars
+                            .iter()
+                            .map(|(k, v)| format!("{}={}", k, v))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        eprintln!(
+                            "{} {} OTEL telemetry for {}",
+                            "✔".green(),
+                            "Enabled".dimmed(),
+                            driver.name()
+                        );
+                        format!("{} {}", env_prefix, base_cmd)
+                    } else {
+                        base_cmd
+                    }
+                } else {
+                    base_cmd
+                }
+            } else {
+                base_cmd
+            }
+        } else {
+            base_cmd
+        };
+
+        let cwd = current_dir
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| ".".to_string());
+
+        // Create tmux session with the command
+        NewSession::new()
+            .name(&session)
+            .detached()
+            .start_directory(&cwd)
+            .window_name(shell_name)
+            .shell_command(&cmd)
+            .run()?;
+
+        // Tag session with manifest path so it shows up in `axel session ls`
+        let manifest_str = manifest_path.to_string_lossy();
+        set_environment(&session, AXEL_MANIFEST_ENV, &manifest_str).ok();
+
+        eprintln!(
+            "{} {} tmux session '{}'",
+            "✔".green(),
+            "Created".dimmed(),
+            session
+        );
+
+        // Attach to the session
+        attach_session(&session)?;
+
+        // Cleanup after session ends (user detached or shell exited)
+        if let Some(ref install_dir) = current_dir {
+            let cleaned = cleanup_skills(install_dir);
+            if !cleaned.is_empty() {
+                eprintln!(
+                    "{} {} {} artifacts",
+                    "✔".green(),
+                    "Cleaned".dimmed(),
+                    format_cleaned_drivers(&cleaned)
+                );
+            }
+        }
+
+        return Ok(());
+    }
 
     let status = if let Some(cmd) = command {
         let mut process = std::process::Command::new("sh");
@@ -483,6 +653,36 @@ pub fn launch_shell_by_name(
 
     status?;
     Ok(())
+}
+
+/// Generate a unique session name for a shell.
+///
+/// Format: `{workspace}-{shell}-{index}` where index increments to avoid collisions.
+fn generate_session_name(workspace: &str, shell_name: &str) -> String {
+    let base = format!("{}-{}", workspace, shell_name);
+
+    // Check if base name is available
+    if !has_session(&base) {
+        return base;
+    }
+
+    // Find next available index
+    for i in 1..100 {
+        let name = format!("{}-{}", base, i);
+        if !has_session(&name) {
+            return name;
+        }
+    }
+
+    // Fallback with timestamp if too many sessions
+    format!(
+        "{}-{}",
+        base,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    )
 }
 
 /// Launch in tmux control mode (-CC) for iTerm2 integration.

@@ -18,8 +18,11 @@ pub mod tmux;
 
 // Re-export commonly used types at crate root
 pub use config::{
-    Skill, SkillPathConfig, AiShellConfig, CustomShellConfig, Profile, ProfilePane, ProfileType,
-    ResolvedPane, ShellConfig, TerminalConfig, WorkspaceConfig, WorkspaceIndex,
+    AiShellConfig, CustomShellConfig, Profile, ProfilePane, ProfileType, ResolvedPane, ShellConfig,
+    Skill, SkillPathConfig, TerminalConfig, WorkspaceConfig, WorkspaceIndex,
 };
-pub use drivers::{SkillDriver, ClaudeDriver, CodexDriver, OpenCodeDriver, all_skill_patterns};
-pub use hooks::{generate_hooks_settings, otel_logs_endpoint, otel_metrics_endpoint, otel_traces_endpoint, settings_path, write_settings};
+pub use drivers::{ClaudeDriver, CodexDriver, OpenCodeDriver, SkillDriver, all_skill_patterns};
+pub use hooks::{
+    generate_hooks_settings, otel_logs_endpoint, otel_metrics_endpoint, otel_traces_endpoint,
+    settings_path, write_settings,
+};

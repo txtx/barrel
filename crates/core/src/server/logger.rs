@@ -3,9 +3,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use tokio::fs::OpenOptions;
-use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc;
+use tokio::{fs::OpenOptions, io::AsyncWriteExt, sync::mpsc};
 
 use super::events::TimestampedEvent;
 

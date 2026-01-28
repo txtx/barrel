@@ -17,7 +17,11 @@ pub struct TimestampedEvent {
 }
 
 impl TimestampedEvent {
-    pub fn new(event_type: impl Into<String>, pane_id: impl Into<String>, event: serde_json::Value) -> Self {
+    pub fn new(
+        event_type: impl Into<String>,
+        pane_id: impl Into<String>,
+        event: serde_json::Value,
+    ) -> Self {
         Self {
             timestamp: Utc::now(),
             event_type: event_type.into(),

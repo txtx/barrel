@@ -15,10 +15,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::claude::install_index_symlink;
-use super::SkillDriver;
-use crate::config::WorkspaceConfig;
-use crate::hooks::{otel_logs_endpoint, otel_metrics_endpoint, otel_traces_endpoint};
+use super::{SkillDriver, claude::install_index_symlink};
+use crate::{
+    config::WorkspaceConfig,
+    hooks::{otel_logs_endpoint, otel_metrics_endpoint, otel_traces_endpoint},
+};
 
 /// Codex skill driver
 pub struct CodexDriver;
@@ -142,8 +143,20 @@ impl SkillDriver for CodexDriver {
                 "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT".to_string(),
                 otel_traces_endpoint(port, pane_id),
             ),
-            // Enable log exporter
+            // Enable exporters
             ("OTEL_LOGS_EXPORTER".to_string(), "otlp".to_string()),
+            ("OTEL_METRICS_EXPORTER".to_string(), "otlp".to_string()),
+            ("OTEL_TRACES_EXPORTER".to_string(), "otlp".to_string()),
+            // Faster export intervals (10 seconds instead of default 60)
+            // OTEL_METRIC_EXPORT_INTERVAL - periodic metric reader export interval (ms)
+            (
+                "OTEL_METRIC_EXPORT_INTERVAL".to_string(),
+                "10000".to_string(),
+            ),
+            // OTEL_BSP_SCHEDULE_DELAY - batch span processor schedule delay (ms)
+            ("OTEL_BSP_SCHEDULE_DELAY".to_string(), "10000".to_string()),
+            // OTEL_BLRP_SCHEDULE_DELAY - batch log record processor schedule delay (ms)
+            ("OTEL_BLRP_SCHEDULE_DELAY".to_string(), "10000".to_string()),
         ]
     }
 

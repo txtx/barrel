@@ -33,11 +33,14 @@ use axel_core::{
     tmux::{attach_session, current_session, has_session},
 };
 use clap::{CommandFactory, Parser};
-use cli::{SkillCommands, Cli, Commands, SessionCommands};
+use cli::{Cli, Commands, SessionCommands, SkillCommands};
 use colored::Colorize;
 use commands::{
+    session::{
+        do_kill_all_sessions, do_kill_workspace, do_list_sessions, launch_from_manifest,
+        launch_shell_by_name,
+    },
     skill::{fork_skill, import_skill, link_skill, list_skills, new_skill, rm_skill},
-    session::{do_kill_workspace, do_list_sessions, launch_from_manifest, launch_shell_by_name},
 };
 
 // =============================================================================
@@ -127,7 +130,7 @@ fn main() -> Result<()> {
                 SessionCommands::List { all } => do_list_sessions(!all),
                 SessionCommands::New { shell } => {
                     if let Some(name) = shell {
-                        launch_shell_by_name(&manifest_path, &name, None, None, None)
+                        launch_shell_by_name(&manifest_path, &name, None, None, None, false, None)
                     } else {
                         launch_from_manifest(&manifest_path, cli.profile.as_deref())
                     }
@@ -143,36 +146,37 @@ fn main() -> Result<()> {
                 }
                 SessionCommands::Kill {
                     name,
+                    all,
                     keep_skills,
                     confirm,
                 } => {
-                    let session_name = match name {
-                        Some(n) => n,
-                        None => current_session().ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "Not inside a tmux session. Specify a session name: axel session kill <name>"
-                            )
-                        })?,
-                    };
-                    do_kill_workspace(
-                        &workspaces_dir,
-                        &session_name,
-                        keep_skills,
-                        false,
-                        None,
-                        confirm,
-                    )
+                    if all {
+                        do_kill_all_sessions(&workspaces_dir, keep_skills, confirm)
+                    } else {
+                        let session_name = match name {
+                            Some(n) => n,
+                            None => current_session().ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "Not inside a tmux session. Specify a session name or use --all: axel session kill <name>"
+                                )
+                            })?,
+                        };
+                        do_kill_workspace(
+                            &workspaces_dir,
+                            &session_name,
+                            keep_skills,
+                            false,
+                            None,
+                            confirm,
+                        )
+                    }
                 }
             },
             Commands::Server { port, session, log } => {
                 // Run the server in async context
                 let rt = tokio::runtime::Runtime::new()?;
                 rt.block_on(async {
-                    commands::server::run(commands::server::ServerArgs {
-                        port,
-                        session,
-                        log,
-                    }).await
+                    commands::server::run(commands::server::ServerArgs { port, session, log }).await
                 })
             }
         };
@@ -214,7 +218,15 @@ fn main() -> Result<()> {
         if name == "setup" {
             setup_axel()?;
         } else if manifest_path.exists() {
-            launch_shell_by_name(&manifest_path, name, cli.prompt.as_deref(), cli.pane_id.as_deref(), cli.server_port)?;
+            launch_shell_by_name(
+                &manifest_path,
+                name,
+                cli.prompt.as_deref(),
+                cli.pane_id.as_deref(),
+                cli.server_port,
+                cli.tmux,
+                cli.session_name.as_deref(),
+            )?;
         } else {
             eprintln!(
                 "{} No AXEL.md found. Run '{}' to create one.",
@@ -270,9 +282,7 @@ fn resolve_manifest_path(cli_path: Option<&str>) -> PathBuf {
         }
     }
 
-    std::env::current_dir()
-        .unwrap_or_default()
-        .join("AXEL.md")
+    std::env::current_dir().unwrap_or_default().join("AXEL.md")
 }
 
 /// Get the base directory (parent of manifest) for resolving relative paths
@@ -593,11 +603,7 @@ fn setup_axel() -> Result<()> {
     let global_config = global_dir.join("AXEL.md");
     if !global_config.exists() {
         std::fs::write(&global_config, "---\n# Global axel configuration\n---\n")?;
-        println!(
-            "{} {} ~/.axel/AXEL.md",
-            "✔".green(),
-            "Created".dimmed()
-        );
+        println!("{} {} ~/.axel/AXEL.md", "✔".green(), "Created".dimmed());
     }
 
     println!();

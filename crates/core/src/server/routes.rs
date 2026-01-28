@@ -1,12 +1,9 @@
 //! Axum route handlers for the event server.
 
-use std::collections::HashMap;
-use std::convert::Infallible;
-use std::process::Command;
-use std::sync::Arc;
+use std::{collections::HashMap, convert::Infallible, process::Command, sync::Arc};
 
 use axum::{
-    Json,
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     response::{
@@ -14,12 +11,10 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
     },
     routing::{get, post},
-    Router,
 };
 use futures_util::stream::Stream;
-use tokio::sync::{broadcast, mpsc, RwLock};
-use tokio_stream::wrappers::BroadcastStream;
-use tokio_stream::StreamExt;
+use tokio::sync::{RwLock, broadcast, mpsc};
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use super::events::{HookEvent, OtelEventType, OutboxResponse, TimestampedEvent};
 
@@ -94,20 +89,12 @@ async fn handle_hook_event(
     if let Some(session_id) = payload.get("session_id").and_then(|v| v.as_str()) {
         let mut mapping = state.session_to_pane.write().await;
         mapping.insert(session_id.to_string(), pane_id.clone());
-        eprintln!(
-            "[hook] Registered session mapping: {} -> {}",
-            &session_id[..8.min(session_id.len())],
-            &pane_id[..8.min(pane_id.len())]
-        );
     } else {
         // Log what keys ARE in the payload for debugging
-        let keys: Vec<&str> = payload.as_object()
+        let keys: Vec<&str> = payload
+            .as_object()
             .map(|obj| obj.keys().map(|k| k.as_str()).collect())
             .unwrap_or_default();
-        eprintln!(
-            "[hook] No session_id in payload. Keys: {:?}, event_type: {}",
-            keys, event_type
-        );
     }
 
     let event = TimestampedEvent::new(event_type, pane_id, payload);
@@ -167,7 +154,10 @@ async fn handle_outbox(
 
         if let Err(e) = result {
             eprintln!("[outbox] Failed to send keys to tmux: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to send response to tmux");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to send response to tmux",
+            );
         }
     } else {
         // Non-tmux mode: write response to a file
@@ -177,13 +167,19 @@ async fn handle_outbox(
         // Ensure directory exists
         if let Err(e) = std::fs::create_dir_all(&response_dir) {
             eprintln!("[outbox] Failed to create response directory: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to write response file");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to write response file",
+            );
         }
 
         // Write the response
         if let Err(e) = std::fs::write(&response_file, &response_text) {
             eprintln!("[outbox] Failed to write response file: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to write response file");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to write response file",
+            );
         }
     }
 
@@ -289,7 +285,10 @@ async fn handle_otel_event(
             eprintln!(
                 "[otel] No pane mapping for session {}. Registered sessions: {:?}",
                 &session_id[..8.min(session_id.len())],
-                mapping.keys().map(|k| &k[..8.min(k.len())]).collect::<Vec<_>>()
+                mapping
+                    .keys()
+                    .map(|k| &k[..8.min(k.len())])
+                    .collect::<Vec<_>>()
             );
             "otel".to_string()
         }
@@ -325,13 +324,17 @@ fn extract_otel_session_id(payload: &serde_json::Value) -> Option<String> {
                 if let Some(sum) = metric.get("sum") {
                     if let Some(data_points) = sum.get("dataPoints").and_then(|d| d.as_array()) {
                         for dp in data_points {
-                            if let Some(attributes) = dp.get("attributes").and_then(|a| a.as_array())
+                            if let Some(attributes) =
+                                dp.get("attributes").and_then(|a| a.as_array())
                             {
                                 for attr in attributes {
-                                    if attr.get("key").and_then(|k| k.as_str()) == Some("session.id")
+                                    if attr.get("key").and_then(|k| k.as_str())
+                                        == Some("session.id")
                                     {
                                         if let Some(value) = attr.get("value") {
-                                            if let Some(s) = value.get("stringValue").and_then(|v| v.as_str()) {
+                                            if let Some(s) =
+                                                value.get("stringValue").and_then(|v| v.as_str())
+                                            {
                                                 return Some(s.to_string());
                                             }
                                         }
