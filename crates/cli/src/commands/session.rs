@@ -133,11 +133,9 @@ pub fn do_kill_all_sessions(
         detach_session(&session.name)?;
 
         // Clean up skills if not keeping them
-        if !keep_skills {
-            if let Some(ref working_dir) = session.working_dir {
-                let dir = PathBuf::from(working_dir);
-                cleanup_skills(&dir);
-            }
+        if !keep_skills && let Some(ref working_dir) = session.working_dir {
+            let dir = PathBuf::from(working_dir);
+            cleanup_skills(&dir);
         }
 
         // Kill the session
@@ -378,17 +376,16 @@ fn launch_shell_mode(config: &axel_core::WorkspaceConfig, profile: Option<&str>)
         }
 
         // Install index file (CLAUDE.md, AGENTS.md, etc.) for the driver
-        if let Some(driver) = drivers::get_driver(driver_name) {
-            if let Some(filename) = driver.index_filename() {
-                if driver.install_index(config, workspace_dir).unwrap_or(false) {
-                    eprintln!(
-                        "{} {} {} symlink",
-                        "✔".green(),
-                        "Created".dimmed(),
-                        filename
-                    );
-                }
-            }
+        if let Some(driver) = drivers::get_driver(driver_name)
+            && let Some(filename) = driver.index_filename()
+            && driver.install_index(config, workspace_dir).unwrap_or(false)
+        {
+            eprintln!(
+                "{} {} {} symlink",
+                "✔".green(),
+                "Created".dimmed(),
+                filename
+            );
         }
     }
 
@@ -480,33 +477,32 @@ pub fn launch_shell_by_name(
         }
 
         // Install index file (CLAUDE.md, AGENTS.md, etc.) for the driver
-        if let Some(driver) = drivers::get_driver(driver_name) {
-            if let Some(filename) = driver.index_filename() {
-                if driver.install_index(&config, install_dir).unwrap_or(false) {
-                    eprintln!(
-                        "{} {} {} symlink",
-                        "✔".green(),
-                        "Created".dimmed(),
-                        filename
-                    );
-                }
-            }
+        if let Some(driver) = drivers::get_driver(driver_name)
+            && let Some(filename) = driver.index_filename()
+            && driver.install_index(&config, install_dir).unwrap_or(false)
+        {
+            eprintln!(
+                "{} {} {} symlink",
+                "✔".green(),
+                "Created".dimmed(),
+                filename
+            );
         }
 
         // Configure Claude hooks if pane_id is provided (for macOS app integration)
-        if matches!(shell_config, ShellConfig::Claude(_)) {
-            if let Some(pane_id) = pane_id {
-                let hooks_settings = generate_hooks_settings(port, pane_id);
-                let hooks_path = settings_path(install_dir);
-                if write_settings(&hooks_settings, &hooks_path).is_ok() {
-                    eprintln!(
-                        "{} {} Claude hooks for pane {} (port {})",
-                        "✔".green(),
-                        "Configured".dimmed(),
-                        &pane_id[..8.min(pane_id.len())],
-                        port
-                    );
-                }
+        if matches!(shell_config, ShellConfig::Claude(_))
+            && let Some(pane_id) = pane_id
+        {
+            let hooks_settings = generate_hooks_settings(port, pane_id);
+            let hooks_path = settings_path(install_dir);
+            if write_settings(&hooks_settings, &hooks_path).is_ok() {
+                eprintln!(
+                    "{} {} Claude hooks for pane {} (port {})",
+                    "✔".green(),
+                    "Configured".dimmed(),
+                    &pane_id[..8.min(pane_id.len())],
+                    port
+                );
             }
         }
     }
@@ -615,20 +611,20 @@ pub fn launch_shell_by_name(
         process.arg("-c").arg(&cmd);
 
         // Enable OTEL telemetry if driver supports it and we have a pane_id
-        if let (Some(pane_id), Some(driver)) = (pane_id, drivers::get_driver(driver_name)) {
-            if driver.supports_otel() {
-                let otel_vars = driver.otel_env_vars(port, pane_id);
-                for (key, value) in &otel_vars {
-                    process.env(key, value);
-                }
-                if !otel_vars.is_empty() {
-                    eprintln!(
-                        "{} {} OTEL telemetry for {}",
-                        "✔".green(),
-                        "Enabled".dimmed(),
-                        driver.name()
-                    );
-                }
+        if let (Some(pane_id), Some(driver)) = (pane_id, drivers::get_driver(driver_name))
+            && driver.supports_otel()
+        {
+            let otel_vars = driver.otel_env_vars(port, pane_id);
+            for (key, value) in &otel_vars {
+                process.env(key, value);
+            }
+            if !otel_vars.is_empty() {
+                eprintln!(
+                    "{} {} OTEL telemetry for {}",
+                    "✔".green(),
+                    "Enabled".dimmed(),
+                    driver.name()
+                );
             }
         }
 

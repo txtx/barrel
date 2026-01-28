@@ -306,17 +306,16 @@ pub fn create_workspace(
             .collect();
 
         for driver_name in driver_names {
-            if let Some(driver) = drivers::get_driver(driver_name) {
-                if let Some(filename) = driver.index_filename() {
-                    if driver.install_index(config, workspace_dir).unwrap_or(false) {
-                        eprintln!(
-                            "{} {} {} symlink",
-                            "✔".green(),
-                            "Created".dimmed(),
-                            filename
-                        );
-                    }
-                }
+            if let Some(driver) = drivers::get_driver(driver_name)
+                && let Some(filename) = driver.index_filename()
+                && driver.install_index(config, workspace_dir).unwrap_or(false)
+            {
+                eprintln!(
+                    "{} {} {} symlink",
+                    "✔".green(),
+                    "Created".dimmed(),
+                    filename
+                );
             }
         }
     }

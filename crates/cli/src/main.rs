@@ -183,16 +183,16 @@ fn main() -> Result<()> {
     }
 
     // Handle --pane-id without a shell name: send prompt to an existing tmux pane
-    if cli.name.is_none() {
-        if let Some(ref pane_id) = cli.pane_id {
-            let prompt = cli.prompt.as_deref().unwrap_or("");
-            if prompt.is_empty() {
-                eprintln!("{} --pane-id requires --prompt", "✘".red());
-                std::process::exit(1);
-            }
-            axel_core::tmux::send_keys(pane_id, prompt)?;
-            return Ok(());
+    if cli.name.is_none()
+        && let Some(ref pane_id) = cli.pane_id
+    {
+        let prompt = cli.prompt.as_deref().unwrap_or("");
+        if prompt.is_empty() {
+            eprintln!("{} --pane-id requires --prompt", "✘".red());
+            std::process::exit(1);
         }
+        axel_core::tmux::send_keys(pane_id, prompt)?;
+        return Ok(());
     }
 
     if let Some(name) = cli.kill {

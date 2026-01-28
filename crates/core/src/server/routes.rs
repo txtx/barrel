@@ -91,7 +91,7 @@ async fn handle_hook_event(
         mapping.insert(session_id.to_string(), pane_id.clone());
     } else {
         // Log what keys ARE in the payload for debugging
-        let keys: Vec<&str> = payload
+        let _keys: Vec<&str> = payload
             .as_object()
             .map(|obj| obj.keys().map(|k| k.as_str()).collect())
             .unwrap_or_default();
@@ -321,24 +321,18 @@ fn extract_otel_session_id(payload: &serde_json::Value) -> Option<String> {
         for sm in scope_metrics {
             let metrics = sm.get("metrics")?.as_array()?;
             for metric in metrics {
-                if let Some(sum) = metric.get("sum") {
-                    if let Some(data_points) = sum.get("dataPoints").and_then(|d| d.as_array()) {
-                        for dp in data_points {
-                            if let Some(attributes) =
-                                dp.get("attributes").and_then(|a| a.as_array())
-                            {
-                                for attr in attributes {
-                                    if attr.get("key").and_then(|k| k.as_str())
-                                        == Some("session.id")
-                                    {
-                                        if let Some(value) = attr.get("value") {
-                                            if let Some(s) =
-                                                value.get("stringValue").and_then(|v| v.as_str())
-                                            {
-                                                return Some(s.to_string());
-                                            }
-                                        }
-                                    }
+                if let Some(sum) = metric.get("sum")
+                    && let Some(data_points) = sum.get("dataPoints").and_then(|d| d.as_array())
+                {
+                    for dp in data_points {
+                        if let Some(attributes) = dp.get("attributes").and_then(|a| a.as_array()) {
+                            for attr in attributes {
+                                if attr.get("key").and_then(|k| k.as_str()) == Some("session.id")
+                                    && let Some(value) = attr.get("value")
+                                    && let Some(s) =
+                                        value.get("stringValue").and_then(|v| v.as_str())
+                                {
+                                    return Some(s.to_string());
                                 }
                             }
                         }

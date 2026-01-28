@@ -1051,7 +1051,7 @@ mod tests {
         let skill_path = temp_dir.join("test-skill.md");
         std::fs::write(&skill_path, content).unwrap();
 
-        let skill = Agent::from_file(&skill_path).unwrap();
+        let skill = Skill::from_file(&skill_path).unwrap();
         assert_eq!(skill.name, "test-skill");
         assert_eq!(skill.prompt, content);
         assert!(skill.description.contains("Test Agent") || skill.description.contains("helpful"));
@@ -1076,7 +1076,7 @@ You are a specialized skill."#;
         let skill_path = temp_dir.join("frontmatter-skill.md");
         std::fs::write(&skill_path, content).unwrap();
 
-        let skill = Agent::from_file(&skill_path).unwrap();
+        let skill = Skill::from_file(&skill_path).unwrap();
         assert_eq!(skill.name, "custom-name");
         assert_eq!(skill.description, "A custom description");
         assert_eq!(
@@ -1103,7 +1103,7 @@ You are a specialized skill."#;
         let skill_file = skill_dir.join("SKILL.md");
         std::fs::write(&skill_file, "# My Agent\n\nHello").unwrap();
 
-        let skill = Agent::from_file(&skill_file).unwrap();
+        let skill = Skill::from_file(&skill_file).unwrap();
         assert_eq!(skill.name, "my-skill");
 
         std::fs::remove_dir_all(&temp_dir).ok();

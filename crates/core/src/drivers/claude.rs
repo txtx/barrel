@@ -44,7 +44,7 @@ pub(super) fn install_index_symlink(
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&canonical_source, &link_path)?;
-        return Ok(true);
+        Ok(true)
     }
 
     #[cfg(not(unix))]
