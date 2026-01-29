@@ -132,7 +132,11 @@ pub enum Commands {
     ///
     /// Creates `AXEL.md` with a default configuration and an `skills/`
     /// directory with an `index.md` template for project documentation.
-    Init,
+    Init {
+        /// Workspace name (skips interactive prompt if provided)
+        #[arg(short = 'w', long = "workspace", value_name = "NAME")]
+        workspace: Option<String>,
+    },
 
     /// Scan for existing skills and consolidate them using AI.
     ///

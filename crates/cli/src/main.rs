@@ -116,7 +116,7 @@ fn main() -> Result<()> {
     // Handle subcommands first
     if let Some(command) = cli.command {
         return match command {
-            Commands::Init => init_workspace(),
+            Commands::Init { workspace } => init_workspace(workspace),
             Commands::Bootstrap => bootstrap_skills(),
             Commands::Skill { action } => match action {
                 SkillCommands::List => list_skills(&manifest_path, &base_dir),
@@ -313,7 +313,7 @@ pub fn display_path(path: &Path) -> String {
 // =============================================================================
 
 /// Initialize an axel workspace in the current directory
-fn init_workspace() -> Result<()> {
+fn init_workspace(workspace_name: Option<String>) -> Result<()> {
     use dialoguer::{Input, theme::ColorfulTheme};
 
     let current_dir = std::env::current_dir()?;
@@ -324,18 +324,22 @@ fn init_workspace() -> Result<()> {
         std::process::exit(1);
     }
 
-    let theme = ColorfulTheme::default();
-
     // Default name from directory
     let default_name = current_dir
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "workspace".to_string());
 
-    let name: String = Input::with_theme(&theme)
-        .with_prompt("Workspace name")
-        .default(default_name)
-        .interact_text()?;
+    // Use provided name or prompt interactively
+    let name = if let Some(name) = workspace_name {
+        name
+    } else {
+        let theme = ColorfulTheme::default();
+        Input::with_theme(&theme)
+            .with_prompt("Workspace name")
+            .default(default_name)
+            .interact_text()?
+    };
 
     // Create AXEL.md (includes project context after frontmatter)
     let config_content = generate_config(&name, &current_dir.to_string_lossy());

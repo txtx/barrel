@@ -859,7 +859,8 @@ fn start_embedded_server(port: u16, pane_id: Option<&str>) -> Result<()> {
 
     let config = ServerConfig {
         port,
-        session: String::new(), // No tmux session monitoring in macOS app mode
+        // Use pane_id as the session name - this enables tmux send-keys for outbox responses
+        session: pane_id.map(|s| s.to_string()).unwrap_or_default(),
         log_path,
     };
 

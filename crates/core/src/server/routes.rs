@@ -147,13 +147,26 @@ async fn handle_outbox(
             format!("{}:0.1", tmux_session)
         };
 
-        // Send the response text followed by Enter
-        let result = Command::new("tmux")
-            .args(["send-keys", "-t", &target, &response_text, "Enter"])
+        // Send the response text literally (handles special chars, spaces, newlines)
+        let text_result = Command::new("tmux")
+            .args(["send-keys", "-t", &target, "-l", &response_text])
             .output();
 
-        if let Err(e) = result {
-            eprintln!("[outbox] Failed to send keys to tmux: {}", e);
+        if let Err(e) = text_result {
+            eprintln!("[outbox] Failed to send text to tmux: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to send response to tmux",
+            );
+        }
+
+        // Send Enter key to submit the prompt
+        let enter_result = Command::new("tmux")
+            .args(["send-keys", "-t", &target, "Enter"])
+            .output();
+
+        if let Err(e) = enter_result {
+            eprintln!("[outbox] Failed to send Enter to tmux: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to send response to tmux",
