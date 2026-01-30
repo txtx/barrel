@@ -530,13 +530,16 @@ pub fn launch_shell_by_name(
             generate_session_name(&config.workspace, shell_name)
         };
 
-        // Build command with OTEL env vars if driver supports it and server is running
+        // Build command with OTEL support if driver supports it and server is running
         let cmd = if server_port.is_some() {
             if let Some(driver) = drivers::get_driver(driver_name) {
                 if driver.supports_otel() {
                     // Use session name as pane_id for OTEL
                     let otel_vars = driver.otel_env_vars(port, &session);
+                    let otel_args = driver.otel_cli_args(port, &session);
+
                     if !otel_vars.is_empty() {
+                        // Use environment variables (Claude, OpenCode)
                         let env_prefix: String = otel_vars
                             .iter()
                             .map(|(k, v)| format!("{}={}", k, v))
@@ -549,6 +552,23 @@ pub fn launch_shell_by_name(
                             driver.name()
                         );
                         format!("{} {}", env_prefix, base_cmd)
+                    } else if !otel_args.is_empty() {
+                        // Use CLI arguments (Codex)
+                        // Insert OTEL args after the command name but before the prompt
+                        let args_str = otel_args.join(" ");
+                        eprintln!(
+                            "{} {} OTEL telemetry for {}",
+                            "✔".green(),
+                            "Enabled".dimmed(),
+                            driver.name()
+                        );
+                        // Find where to insert args (after "codex" but before prompt)
+                        if let Some(space_idx) = base_cmd.find(' ') {
+                            let (cmd_name, rest) = base_cmd.split_at(space_idx);
+                            format!("{} {}{}", cmd_name, args_str, rest)
+                        } else {
+                            format!("{} {}", base_cmd, args_str)
+                        }
                     } else {
                         base_cmd
                     }
@@ -580,6 +600,28 @@ pub fn launch_shell_by_name(
         let manifest_str = manifest_path.to_string_lossy();
         set_environment(&session, AXEL_MANIFEST_ENV, &manifest_str).ok();
 
+        // Set up bell monitoring for Codex approval detection
+        if let Some(driver) = drivers::get_driver(driver_name)
+            && let Some(hook_cmd) = driver.tmux_bell_hook_command(port, &session)
+        {
+            // Enable bell monitoring on the window
+            let _ = std::process::Command::new("tmux")
+                .args(["set-option", "-t", &session, "monitor-bell", "on"])
+                .status();
+
+            // Set up the alert-bell hook
+            let _ = std::process::Command::new("tmux")
+                .args(["set-hook", "-t", &session, "alert-bell", &hook_cmd])
+                .status();
+
+            eprintln!(
+                "{} {} bell monitoring for {} approvals",
+                "✔".green(),
+                "Enabled".dimmed(),
+                driver.name()
+            );
+        }
+
         eprintln!(
             "{} {} tmux session '{}'",
             "✔".green(),
@@ -606,19 +648,39 @@ pub fn launch_shell_by_name(
         return Ok(());
     }
 
-    let status = if let Some(cmd) = command {
+    let status = if let Some(mut cmd) = command {
         let mut process = std::process::Command::new("sh");
-        process.arg("-c").arg(&cmd);
 
         // Enable OTEL telemetry if driver supports it and we have a pane_id
         if let (Some(pane_id), Some(driver)) = (pane_id, drivers::get_driver(driver_name))
             && driver.supports_otel()
         {
             let otel_vars = driver.otel_env_vars(port, pane_id);
+            let otel_args = driver.otel_cli_args(port, pane_id);
+
+            if !otel_args.is_empty() {
+                // Append CLI args to the command (Codex)
+                let args_str = otel_args.join(" ");
+                // Insert OTEL args after the command name but before the prompt
+                if let Some(space_idx) = cmd.find(' ') {
+                    let (cmd_name, rest) = cmd.split_at(space_idx);
+                    cmd = format!("{} {}{}", cmd_name, args_str, rest);
+                } else {
+                    cmd = format!("{} {}", cmd, args_str);
+                }
+                eprintln!(
+                    "{} {} OTEL telemetry for {}",
+                    "✔".green(),
+                    "Enabled".dimmed(),
+                    driver.name()
+                );
+            }
+
+            // Set environment variables (Claude, OpenCode)
             for (key, value) in &otel_vars {
                 process.env(key, value);
             }
-            if !otel_vars.is_empty() {
+            if !otel_vars.is_empty() && otel_args.is_empty() {
                 eprintln!(
                     "{} {} OTEL telemetry for {}",
                     "✔".green(),
@@ -628,6 +690,7 @@ pub fn launch_shell_by_name(
             }
         }
 
+        process.arg("-c").arg(&cmd);
         process.status()
     } else {
         eprintln!("{}", "No command built, falling back to shell".red());

@@ -8,7 +8,9 @@
 //!
 //! ## OpenTelemetry Support
 //!
-//! Codex supports OTEL telemetry export via standard environment variables.
+//! Codex supports OTEL telemetry export via `-c`/`--config` CLI flags.
+//! Unlike Claude which uses environment variables, Codex requires config
+//! file settings or CLI overrides for OTEL export.
 //! See: https://developers.openai.com/codex/config-advanced/
 
 use std::path::{Path, PathBuf};
@@ -120,44 +122,70 @@ impl SkillDriver for CodexDriver {
         true
     }
 
-    fn otel_env_vars(&self, port: u16, pane_id: &str) -> Vec<(String, String)> {
-        // Codex uses standard OTEL environment variables for telemetry export.
-        // Unlike Claude, Codex primarily exports logs (not metrics).
+    fn otel_cli_args(&self, port: u16, pane_id: &str) -> Vec<String> {
+        // Codex uses -c/--config flags for configuration overrides.
+        // Unlike Claude which uses env vars, Codex requires config file or CLI flags.
         // See: https://developers.openai.com/codex/config-advanced/
+        //
+        // The values need to be shell-quoted because they contain special characters.
+        let logs_endpoint = otel_logs_endpoint(port, pane_id);
+        let metrics_endpoint = otel_metrics_endpoint(port, pane_id);
+        let traces_endpoint = otel_traces_endpoint(port, pane_id);
+
         vec![
-            // Use HTTP JSON protocol (our server accepts this)
-            (
-                "OTEL_EXPORTER_OTLP_PROTOCOL".to_string(),
-                "http/json".to_string(),
+            // Enable analytics (required for metrics export)
+            "-c".to_string(),
+            "'analytics_enabled=true'".to_string(),
+            // Enable bell notifications for approvals (allows tmux to detect them)
+            "-c".to_string(),
+            "'tui_notifications=\"always\"'".to_string(),
+            "-c".to_string(),
+            "'tui_notification_method=\"bel\"'".to_string(),
+            // Disable paste burst detection so tmux send-keys works correctly
+            // (otherwise Enter is treated as newline when sent shortly after text)
+            "-c".to_string(),
+            "'disable_paste_burst=true'".to_string(),
+            // Configure log exporter (OTLP HTTP with JSON protocol)
+            "-c".to_string(),
+            format!(
+                r#"'otel.exporter={{otlp-http={{endpoint="{}",protocol="json"}}}}'"#,
+                logs_endpoint
             ),
-            // Set specific endpoints for each signal type
-            (
-                "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT".to_string(),
-                otel_logs_endpoint(port, pane_id),
+            // Configure trace exporter
+            "-c".to_string(),
+            format!(
+                r#"'otel.trace_exporter={{otlp-http={{endpoint="{}",protocol="json"}}}}'"#,
+                traces_endpoint
             ),
-            (
-                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT".to_string(),
-                otel_metrics_endpoint(port, pane_id),
+            // Configure metrics exporter (override default Statsig)
+            "-c".to_string(),
+            format!(
+                r#"'otel.metrics_exporter={{otlp-http={{endpoint="{}",protocol="json"}}}}'"#,
+                metrics_endpoint
             ),
-            (
-                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT".to_string(),
-                otel_traces_endpoint(port, pane_id),
-            ),
-            // Enable exporters
-            ("OTEL_LOGS_EXPORTER".to_string(), "otlp".to_string()),
-            ("OTEL_METRICS_EXPORTER".to_string(), "otlp".to_string()),
-            ("OTEL_TRACES_EXPORTER".to_string(), "otlp".to_string()),
-            // Faster export intervals (10 seconds instead of default 60)
-            // OTEL_METRIC_EXPORT_INTERVAL - periodic metric reader export interval (ms)
-            (
-                "OTEL_METRIC_EXPORT_INTERVAL".to_string(),
-                "10000".to_string(),
-            ),
-            // OTEL_BSP_SCHEDULE_DELAY - batch span processor schedule delay (ms)
-            ("OTEL_BSP_SCHEDULE_DELAY".to_string(), "10000".to_string()),
-            // OTEL_BLRP_SCHEDULE_DELAY - batch log record processor schedule delay (ms)
-            ("OTEL_BLRP_SCHEDULE_DELAY".to_string(), "10000".to_string()),
         ]
+    }
+
+    fn tmux_bell_hook_command(&self, port: u16, pane_id: &str) -> Option<String> {
+        // Generate the command that tmux should run when a bell is detected.
+        // This captures the pane content, checks for approval patterns, and sends to axel server.
+        // The payload matches the HookEvent structure so it works with /events/{pane_id}.
+        Some(format!(
+            r#"run-shell 'content=$(tmux capture-pane -t {pane} -p -S -30 2>/dev/null); \
+if echo "$content" | grep -q "Yes, proceed"; then \
+  cmd=$(echo "$content" | grep -B10 "Yes, proceed" | grep -E "^[[:space:]]*[a-z]" | tail -1 | sed "s/^[[:space:]]*//"); \
+  curl -s -X POST "http://localhost:{port}/events/{pane}" \
+    -H "Content-Type: application/json" \
+    -d "{{\\"hook_event_name\\":\\"PermissionRequest\\",\\"tool_name\\":\\"Bash\\",\\"session_id\\":\\"{pane}\\",\\"tool_input\\":{{\\"command\\":\\"$cmd\\"}}}}" >/dev/null 2>&1; \
+elif echo "$content" | grep -q "Codex wants to edit"; then \
+  file=$(echo "$content" | grep "Codex wants to edit" | sed "s/.*edit //" | tr -d "\\n"); \
+  curl -s -X POST "http://localhost:{port}/events/{pane}" \
+    -H "Content-Type: application/json" \
+    -d "{{\\"hook_event_name\\":\\"PermissionRequest\\",\\"tool_name\\":\\"Edit\\",\\"session_id\\":\\"{pane}\\",\\"tool_input\\":{{\\"file_path\\":\\"$file\\"}}}}" >/dev/null 2>&1; \
+fi'"#,
+            pane = pane_id,
+            port = port
+        ))
     }
 
     fn index_filename(&self) -> Option<&'static str> {

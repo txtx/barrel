@@ -161,8 +161,9 @@ async fn handle_outbox(
         }
 
         // Send Enter key to submit the prompt
+        // Use C-m (Ctrl+M / carriage return) which works better with TUI apps like Codex
         let enter_result = Command::new("tmux")
-            .args(["send-keys", "-t", &target, "Enter"])
+            .args(["send-keys", "-t", &target, "C-m"])
             .output();
 
         if let Err(e) = enter_result {
@@ -257,12 +258,6 @@ async fn handle_otel_event_with_pane(
     pane_id: String,
     payload: serde_json::Value,
 ) -> impl IntoResponse {
-    eprintln!(
-        "[otel] Received {} with pane_id from URL: {}",
-        event_type,
-        &pane_id[..8.min(pane_id.len())]
-    );
-
     let event = TimestampedEvent::new(event_type.to_string(), pane_id, payload);
 
     // Send to file logger

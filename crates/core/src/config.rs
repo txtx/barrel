@@ -895,10 +895,13 @@ shells:
     # args: []                 # Additional CLI arguments
 
   # Codex - OpenAI coding assistant
-  # - type: codex
-  #   color: green
-  #   skills: ["*"]
-  #   # model: gpt-4           # Model to use
+  - type: codex
+    color: green
+    skills:
+      - "*"
+    # model: o3-mini           # Model to use
+    # prompt: "Your task..."   # Initial prompt
+    # args: []                 # Additional CLI arguments
 
   # OpenCode - Open-source coding assistant
   # - type: opencode

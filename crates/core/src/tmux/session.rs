@@ -66,6 +66,7 @@ const VAL_TOP: &str = "top";
 // =============================================================================
 
 const KEY_TABLE_COPY_MODE: &str = "copy-mode";
+const KEY_TABLE_ROOT: &str = "root";
 const KEY_MOUSE_DRAG_END: &str = "MouseDragEnd1Pane";
 const KEY_WHEEL_UP: &str = "WheelUpPane";
 const KEY_WHEEL_DOWN: &str = "WheelDownPane";
@@ -429,7 +430,7 @@ pub fn create_workspace(
         &["send-keys", "-X", "copy-pipe-and-cancel"],
     )?;
 
-    // Slow down mouse wheel scroll
+    // Slow down mouse wheel scroll in copy-mode
     bind_key(
         KEY_TABLE_COPY_MODE,
         KEY_WHEEL_UP,
@@ -442,6 +443,23 @@ pub fn create_workspace(
         &["send-keys", "-X", "scroll-down"],
     )
     .ok();
+
+    // Enable mouse wheel scrolling in root mode
+    // - If in alternate screen (vim, less, etc.), send mouse events to the app
+    // - Otherwise, enter copy-mode and scroll the scrollback buffer
+    bind_key(
+        KEY_TABLE_ROOT,
+        KEY_WHEEL_UP,
+        &[
+            "if-shell",
+            "-F",
+            "#{alternate_on}",
+            "send-keys -M",
+            "copy-mode -e; send-keys -M",
+        ],
+    )
+    .ok();
+    bind_key(KEY_TABLE_ROOT, KEY_WHEEL_DOWN, &["send-keys", "-M"]).ok();
 
     rename_window(session_name, &config.workspace)?;
 

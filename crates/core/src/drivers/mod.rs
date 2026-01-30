@@ -52,9 +52,28 @@ pub trait SkillDriver {
         Vec::new()
     }
 
+    /// Get CLI arguments for OpenTelemetry configuration.
+    ///
+    /// Returns CLI arguments to append to the command (e.g., `-c key=value` for Codex).
+    /// Default implementation returns empty vec (use env vars instead).
+    fn otel_cli_args(&self, _port: u16, _pane_id: &str) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Whether this driver supports OpenTelemetry telemetry export.
     fn supports_otel(&self) -> bool {
         false
+    }
+
+    /// Generate a tmux hook command for bell-based approval detection.
+    ///
+    /// Some tools (like Codex) send terminal bells when they need approval.
+    /// This method returns a tmux command that should be set as an alert-bell hook
+    /// to capture pane content and send approval requests to the axel server.
+    ///
+    /// Returns None if the driver doesn't support bell-based approval detection.
+    fn tmux_bell_hook_command(&self, _port: u16, _pane_id: &str) -> Option<String> {
+        None
     }
 
     /// Install index file (e.g., CLAUDE.md, AGENTS.md) as symlink to AXEL.md.
