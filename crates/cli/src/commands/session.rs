@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use axel_core::{
-    ProfileType, ShellConfig,
+    GridType, PaneConfig,
     claude::ClaudeCommand,
     config::{expand_path, load_config},
     drivers, generate_hooks_settings, git, settings_path,
@@ -272,7 +272,7 @@ pub fn launch_from_manifest(config_path: &Path, profile: Option<&str>) -> Result
         .unwrap_or_default();
 
     let config = load_config(config_path)?;
-    let profile_type = config.profile_type(profile);
+    let grid_type = config.grid_type(profile);
 
     if !session_name.is_empty() && has_session(&session_name) {
         // Check if this session belongs to a different workspace
@@ -309,8 +309,8 @@ pub fn launch_from_manifest(config_path: &Path, profile: Option<&str>) -> Result
             "{}",
             format!("Attaching to existing session: {}", session_name).blue()
         );
-        return match profile_type {
-            ProfileType::TmuxCC => {
+        return match grid_type {
+            GridType::TmuxCC => {
                 std::process::Command::new("tmux")
                     .args(["-CC", "attach-session", "-t", &session_name])
                     .status()?;
@@ -320,10 +320,10 @@ pub fn launch_from_manifest(config_path: &Path, profile: Option<&str>) -> Result
         };
     }
 
-    match profile_type {
-        ProfileType::Shell => launch_shell_mode(&config, profile),
-        ProfileType::TmuxCC => launch_tmux_cc_mode(config_path, &config, profile),
-        ProfileType::Tmux => launch_tmux_mode(&config, profile),
+    match grid_type {
+        GridType::Shell => launch_shell_mode(&config, profile),
+        GridType::TmuxCC => launch_tmux_cc_mode(config_path, &config, profile),
+        GridType::Tmux => launch_tmux_mode(&config, profile),
     }
 }
 
@@ -347,11 +347,11 @@ fn launch_shell_mode(config: &axel_core::WorkspaceConfig, profile: Option<&str>)
 
     if let Some(ref workspace_dir) = work_dir {
         let (driver_name, skill_names) = match &first_pane.config {
-            ShellConfig::Claude(c) => ("claude", &c.skills),
-            ShellConfig::Codex(c) => ("codex", &c.skills),
-            ShellConfig::Opencode(c) => ("opencode", &c.skills),
-            ShellConfig::Antigravity(c) => ("antigravity", &c.skills),
-            ShellConfig::Custom(_) => ("", &Vec::new()),
+            PaneConfig::Claude(c) => ("claude", &c.skills),
+            PaneConfig::Codex(c) => ("codex", &c.skills),
+            PaneConfig::Opencode(c) => ("opencode", &c.skills),
+            PaneConfig::Antigravity(c) => ("antigravity", &c.skills),
+            PaneConfig::Custom(_) => ("", &Vec::new()),
         };
 
         if !skill_names.is_empty()
@@ -389,7 +389,7 @@ fn launch_shell_mode(config: &axel_core::WorkspaceConfig, profile: Option<&str>)
         }
     }
 
-    let command = build_shell_command(&first_pane.config, index.as_ref(), None);
+    let command = build_pane_command(&first_pane.config, index.as_ref(), None);
 
     if let Some(ref dir) = work_dir {
         std::env::set_current_dir(dir)?;
@@ -405,10 +405,10 @@ fn launch_shell_mode(config: &axel_core::WorkspaceConfig, profile: Option<&str>)
     }
 }
 
-/// Launch a specific shell by name from the manifest.
-pub fn launch_shell_by_name(
+/// Launch a specific pane by name from the manifest.
+pub fn launch_pane_by_name(
     manifest_path: &Path,
-    shell_name: &str,
+    pane_name: &str,
     prompt_override: Option<&str>,
     pane_id: Option<&str>,
     server_port: Option<u16>,
@@ -427,18 +427,20 @@ pub fn launch_shell_by_name(
     let config = load_config(manifest_path)?;
     let index = config.load_index();
 
-    let shell_config = config
-        .shells
+    let pane_config = config
+        .layouts
+        .panes
         .iter()
-        .find(|s| s.shell_type() == shell_name)
+        .find(|s| s.pane_type() == pane_name)
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "Shell '{}' not found in manifest. Available shells: {}",
-                shell_name,
+                "Pane '{}' not found in manifest. Available panes: {}",
+                pane_name,
                 config
-                    .shells
+                    .layouts
+                    .panes
                     .iter()
-                    .map(|s| s.shell_type())
+                    .map(|s| s.pane_type())
                     .collect::<Vec<_>>()
                     .join(", ")
             )
@@ -447,12 +449,12 @@ pub fn launch_shell_by_name(
     let current_dir = std::env::current_dir().ok();
 
     if let Some(ref install_dir) = current_dir {
-        let (driver_name, skill_names) = match shell_config {
-            ShellConfig::Claude(c) => ("claude", &c.skills),
-            ShellConfig::Codex(c) => ("codex", &c.skills),
-            ShellConfig::Opencode(c) => ("opencode", &c.skills),
-            ShellConfig::Antigravity(c) => ("antigravity", &c.skills),
-            ShellConfig::Custom(_) => ("", &Vec::new()),
+        let (driver_name, skill_names) = match pane_config {
+            PaneConfig::Claude(c) => ("claude", &c.skills),
+            PaneConfig::Codex(c) => ("codex", &c.skills),
+            PaneConfig::Opencode(c) => ("opencode", &c.skills),
+            PaneConfig::Antigravity(c) => ("antigravity", &c.skills),
+            PaneConfig::Custom(_) => ("", &Vec::new()),
         };
 
         if !skill_names.is_empty()
@@ -490,7 +492,7 @@ pub fn launch_shell_by_name(
         }
 
         // Configure Claude hooks if pane_id is provided (for macOS app integration)
-        if matches!(shell_config, ShellConfig::Claude(_))
+        if matches!(pane_config, PaneConfig::Claude(_))
             && let Some(pane_id) = pane_id
         {
             let hooks_settings = generate_hooks_settings(port, pane_id);
@@ -507,15 +509,15 @@ pub fn launch_shell_by_name(
         }
     }
 
-    let command = build_shell_command(shell_config, index.as_ref(), prompt_override);
+    let command = build_pane_command(pane_config, index.as_ref(), prompt_override);
 
-    // Get the driver for this shell type to check OTEL support
-    let driver_name = match shell_config {
-        ShellConfig::Claude(_) => "claude",
-        ShellConfig::Codex(_) => "codex",
-        ShellConfig::Opencode(_) => "opencode",
-        ShellConfig::Antigravity(_) => "antigravity",
-        ShellConfig::Custom(_) => "",
+    // Get the driver for this pane type to check OTEL support
+    let driver_name = match pane_config {
+        PaneConfig::Claude(_) => "claude",
+        PaneConfig::Codex(_) => "codex",
+        PaneConfig::Opencode(_) => "opencode",
+        PaneConfig::Antigravity(_) => "antigravity",
+        PaneConfig::Custom(_) => "",
     };
 
     // If --tmux is specified, create a tmux session instead of running directly
@@ -527,7 +529,7 @@ pub fn launch_shell_by_name(
         let session = if let Some(name) = session_name {
             name.to_string()
         } else {
-            generate_session_name(&config.workspace, shell_name)
+            generate_session_name(&config.workspace, pane_name)
         };
 
         // Build command with OTEL support if driver supports it and server is running
@@ -592,7 +594,7 @@ pub fn launch_shell_by_name(
             .name(&session)
             .detached()
             .start_directory(&cwd)
-            .window_name(shell_name)
+            .window_name(pane_name)
             .shell_command(&cmd)
             .run()?;
 
@@ -817,17 +819,17 @@ fn launch_tmux_mode(config: &axel_core::WorkspaceConfig, profile: Option<&str>) 
 // Helpers
 // =============================================================================
 
-/// Build the shell command string for a given shell config.
+/// Build the command string for a given pane config.
 ///
 /// If `prompt_override` is provided, it takes precedence over the prompt
-/// defined in the shell config or the workspace index.
-fn build_shell_command(
-    shell_config: &ShellConfig,
+/// defined in the pane config or the workspace index.
+fn build_pane_command(
+    pane_config: &PaneConfig,
     index: Option<&axel_core::WorkspaceIndex>,
     prompt_override: Option<&str>,
 ) -> Option<String> {
-    match shell_config {
-        ShellConfig::Claude(c) => {
+    match pane_config {
+        PaneConfig::Claude(c) => {
             let mut cmd = ClaudeCommand::new();
             if let Some(model) = &c.model {
                 cmd = cmd.model(model);
@@ -846,7 +848,7 @@ fn build_shell_command(
             }
             Some(cmd.build())
         }
-        ShellConfig::Codex(c) => {
+        PaneConfig::Codex(c) => {
             let mut parts = vec!["codex".to_string()];
             if let Some(model) = &c.model {
                 parts.push("-m".to_string());
@@ -864,7 +866,7 @@ fn build_shell_command(
             }
             Some(parts.join(" "))
         }
-        ShellConfig::Opencode(c) => {
+        PaneConfig::Opencode(c) => {
             let mut parts = vec!["opencode".to_string()];
             if let Some(model) = &c.model {
                 parts.push("-m".to_string());
@@ -882,7 +884,7 @@ fn build_shell_command(
             }
             Some(parts.join(" "))
         }
-        ShellConfig::Antigravity(c) => {
+        PaneConfig::Antigravity(c) => {
             let mut parts = vec!["antigravity".to_string()];
             if let Some(model) = &c.model {
                 parts.push("-m".to_string());
@@ -900,7 +902,7 @@ fn build_shell_command(
             }
             Some(parts.join(" "))
         }
-        ShellConfig::Custom(c) => c.command.clone(),
+        PaneConfig::Custom(c) => c.command.clone(),
     }
 }
 

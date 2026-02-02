@@ -24,17 +24,25 @@ pub struct WorkspaceConfig {
     /// Workspace name (used as tmux session name)
     #[serde(alias = "name")]
     pub workspace: String,
-    /// Shell definitions
-    #[serde(default)]
-    pub shells: Vec<ShellConfig>,
-    /// Terminal layout configuration
-    pub terminal: TerminalConfig,
+    /// Layout configurations (panes + grids)
+    pub layouts: LayoutsConfig,
     /// Agent directories configuration
     #[serde(default)]
     pub skills: Vec<SkillPathConfig>,
     /// Path to the manifest file (set during loading, not from YAML)
     #[serde(skip)]
     pub manifest_path: Option<PathBuf>,
+}
+
+/// Layout configuration containing pane definitions and grid layouts
+#[derive(Debug, Deserialize, Default)]
+pub struct LayoutsConfig {
+    /// Pane definitions (AI shells, regular shells, custom commands)
+    #[serde(default)]
+    pub panes: Vec<PaneConfig>,
+    /// Grid layouts (named configurations of pane arrangements)
+    #[serde(default)]
+    pub grids: HashMap<String, Grid>,
 }
 
 /// Configuration for an skill search path
@@ -231,42 +239,42 @@ impl WorkspaceConfig {
             .and_then(|path| WorkspaceIndex::from_manifest(path, &self.workspace).ok())
     }
 
-    /// Get the profile type for a given profile name (defaults to "default")
-    pub fn profile_type(&self, profile_name: Option<&str>) -> ProfileType {
-        let profile_name = profile_name.unwrap_or("default");
-        self.terminal
-            .profiles
-            .get(profile_name)
-            .map(|p| p.profile_type)
+    /// Get the grid type for a given grid name (defaults to "default")
+    pub fn grid_type(&self, grid_name: Option<&str>) -> GridType {
+        let grid_name = grid_name.unwrap_or("default");
+        self.layouts
+            .grids
+            .get(grid_name)
+            .map(|g| g.grid_type)
             .unwrap_or_default()
     }
 
-    /// Resolve panes using the specified profile (defaults to "default")
-    pub fn resolve_panes(&self, profile_name: Option<&str>) -> Vec<ResolvedPane> {
-        let profile_name = profile_name.unwrap_or("default");
-        let Some(profile) = self.terminal.profiles.get(profile_name) else {
+    /// Resolve panes using the specified grid (defaults to "default")
+    pub fn resolve_panes(&self, grid_name: Option<&str>) -> Vec<ResolvedPane> {
+        let grid_name = grid_name.unwrap_or("default");
+        let Some(grid) = self.layouts.grids.get(grid_name) else {
             return vec![];
         };
 
-        // Build lookup map of shell templates by type
-        let templates: HashMap<&str, &ShellConfig> =
-            self.shells.iter().map(|s| (s.shell_type(), s)).collect();
+        // Build lookup map of pane templates by type
+        let templates: HashMap<&str, &PaneConfig> = self
+            .layouts
+            .panes
+            .iter()
+            .map(|p| (p.pane_type(), p))
+            .collect();
 
         // Default path from manifest directory
         let default_path = self
             .workspace_dir()
             .map(|p| p.to_string_lossy().to_string());
 
-        profile
-            .panes
+        grid.cells
             .iter()
-            .filter_map(|(pane_name, profile_pane)| {
-                let shell_type = profile_pane
-                    .shell_type
-                    .as_deref()
-                    .unwrap_or(pane_name.as_str());
+            .filter_map(|(cell_name, grid_cell)| {
+                let pane_type = grid_cell.pane_type.as_deref().unwrap_or(cell_name.as_str());
 
-                let template = templates.get(shell_type)?;
+                let template = templates.get(pane_type)?;
 
                 let mut config = (*template).clone();
 
@@ -276,20 +284,26 @@ impl WorkspaceConfig {
                     config.set_path(default.clone());
                 }
 
-                if let Some(ref color) = profile_pane.color {
+                if let Some(ref color) = grid_cell.color {
                     config.set_color(color.clone());
                 }
 
                 Some(ResolvedPane {
-                    name: pane_name.clone(),
-                    col: profile_pane.col,
-                    row: profile_pane.row,
-                    width: profile_pane.width,
-                    height: profile_pane.height,
+                    name: cell_name.clone(),
+                    col: grid_cell.col,
+                    row: grid_cell.row,
+                    width: grid_cell.width,
+                    height: grid_cell.height,
                     config,
                 })
             })
             .collect()
+    }
+
+    /// Get the profile type for a given profile name (legacy alias for grid_type)
+    #[deprecated(note = "Use grid_type instead")]
+    pub fn profile_type(&self, profile_name: Option<&str>) -> GridType {
+        self.grid_type(profile_name)
     }
 }
 
@@ -446,86 +460,75 @@ impl WorkspaceIndex {
 }
 
 // =============================================================================
-// Terminal Configuration
+// Grid Configuration
 // =============================================================================
 
-/// Terminal layout configuration
-#[derive(Debug, Deserialize)]
-pub struct TerminalConfig {
-    /// Named profiles with pane layouts
-    #[serde(default)]
-    pub profiles: HashMap<String, Profile>,
-}
-
-/// Terminal profile type
+/// Grid type (how the layout is rendered)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ProfileType {
+pub enum GridType {
     /// Standard tmux session with panes
     #[default]
     Tmux,
     /// iTerm2 tmux control mode (-CC)
     TmuxCC,
-    /// Direct shell execution (no tmux, first shell only)
+    /// Direct shell execution (no tmux, first pane only)
     Shell,
 }
 
-impl<'de> serde::Deserialize<'de> for ProfileType {
+impl<'de> serde::Deserialize<'de> for GridType {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
         match s.as_str() {
-            "tmux" => Ok(ProfileType::Tmux),
-            "tmux_cc" => Ok(ProfileType::TmuxCC),
-            "shell" => Ok(ProfileType::Shell),
+            "tmux" => Ok(GridType::Tmux),
+            "tmux_cc" => Ok(GridType::TmuxCC),
+            "shell" => Ok(GridType::Shell),
             _ => Err(serde::de::Error::custom(format!(
-                "unknown profile type: {} (expected tmux, tmux_cc, or shell)",
+                "unknown grid type: {} (expected tmux, tmux_cc, or shell)",
                 s
             ))),
         }
     }
 }
 
-/// A terminal profile with type and pane definitions
+/// A grid layout with type and cell definitions
 #[derive(Debug, Clone)]
-pub struct Profile {
-    /// Profile type (tmux, tmux_cc, shell)
-    pub profile_type: ProfileType,
-    /// Pane definitions
-    pub panes: IndexMap<String, ProfilePane>,
+pub struct Grid {
+    /// Grid type (tmux, tmux_cc, shell)
+    pub grid_type: GridType,
+    /// Cell definitions (pane placements)
+    pub cells: IndexMap<String, GridCell>,
 }
 
-impl<'de> serde::Deserialize<'de> for Profile {
+impl<'de> serde::Deserialize<'de> for Grid {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let mut map: IndexMap<String, serde_yaml::Value> = IndexMap::deserialize(deserializer)?;
 
-        let profile_type = if let Some(type_value) = map.shift_remove("type") {
+        let grid_type = if let Some(type_value) = map.shift_remove("type") {
             serde_yaml::from_value(type_value).map_err(serde::de::Error::custom)?
         } else {
-            ProfileType::default()
+            GridType::default()
         };
 
-        let panes: IndexMap<String, ProfilePane> = map
+        let cells: IndexMap<String, GridCell> = map
             .into_iter()
-            .filter_map(|(k, v)| serde_yaml::from_value(v).ok().map(|pane| (k, pane)))
+            .filter_map(|(k, v)| serde_yaml::from_value(v).ok().map(|cell| (k, cell)))
             .collect();
 
-        Ok(Profile {
-            profile_type,
-            panes,
-        })
+        Ok(Grid { grid_type, cells })
     }
 }
 
-/// Pane entry in a profile
+/// Cell entry in a grid (references a pane definition)
 #[derive(Debug, Deserialize, Default, Clone)]
-pub struct ProfilePane {
-    /// Reference to a shell type defined in shells
-    pub shell_type: Option<String>,
+pub struct GridCell {
+    /// Reference to a pane type defined in layouts.panes
+    pub pane_type: Option<String>,
     /// Column position
     #[serde(default)]
     pub col: u32,
@@ -538,20 +541,20 @@ pub struct ProfilePane {
     /// Height percentage
     #[serde(default)]
     pub height: Option<u32>,
-    /// Override color from shell definition
+    /// Override color from pane definition
     #[serde(default)]
     pub color: Option<String>,
 }
 
 // =============================================================================
-// Shell Configuration
+// Pane Configuration
 // =============================================================================
 
-/// Raw shell config for deserialization
+/// Raw pane config for deserialization
 #[derive(Debug, Deserialize)]
-struct ShellConfigRaw {
+struct PaneConfigRaw {
     #[serde(rename = "type")]
-    shell_type: String,
+    pane_type: String,
     #[serde(default)]
     path: Option<String>,
     #[serde(default)]
@@ -574,31 +577,31 @@ struct ShellConfigRaw {
     command: Option<String>,
 }
 
-/// Shell configuration - known AI types or custom shell types
+/// Pane configuration - known AI types or custom shell types
 #[derive(Debug, Clone)]
-pub enum ShellConfig {
+pub enum PaneConfig {
     /// Claude Code shell
-    Claude(AiShellConfig),
+    Claude(AiPaneConfig),
     /// Codex shell
-    Codex(AiShellConfig),
+    Codex(AiPaneConfig),
     /// OpenCode shell
-    Opencode(AiShellConfig),
+    Opencode(AiPaneConfig),
     /// Google Antigravity shell
-    Antigravity(AiShellConfig),
+    Antigravity(AiPaneConfig),
     /// Custom shell with arbitrary command
-    Custom(CustomShellConfig),
+    Custom(CustomPaneConfig),
 }
 
-impl<'de> serde::Deserialize<'de> for ShellConfig {
+impl<'de> serde::Deserialize<'de> for PaneConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        let raw = ShellConfigRaw::deserialize(deserializer)?;
+        let raw = PaneConfigRaw::deserialize(deserializer)?;
 
-        match raw.shell_type.as_str() {
-            "claude" => Ok(ShellConfig::Claude(AiShellConfig {
-                shell_type: raw.shell_type,
+        match raw.pane_type.as_str() {
+            "claude" => Ok(PaneConfig::Claude(AiPaneConfig {
+                pane_type: raw.pane_type,
                 path: raw.path,
                 color: raw.color,
                 notes: raw.notes,
@@ -609,8 +612,8 @@ impl<'de> serde::Deserialize<'de> for ShellConfig {
                 prompt: raw.prompt,
                 args: raw.args,
             })),
-            "codex" => Ok(ShellConfig::Codex(AiShellConfig {
-                shell_type: raw.shell_type,
+            "codex" => Ok(PaneConfig::Codex(AiPaneConfig {
+                pane_type: raw.pane_type,
                 path: raw.path,
                 color: raw.color,
                 notes: raw.notes,
@@ -621,8 +624,8 @@ impl<'de> serde::Deserialize<'de> for ShellConfig {
                 prompt: raw.prompt,
                 args: raw.args,
             })),
-            "opencode" => Ok(ShellConfig::Opencode(AiShellConfig {
-                shell_type: raw.shell_type,
+            "opencode" => Ok(PaneConfig::Opencode(AiPaneConfig {
+                pane_type: raw.pane_type,
                 path: raw.path,
                 color: raw.color,
                 notes: raw.notes,
@@ -633,8 +636,8 @@ impl<'de> serde::Deserialize<'de> for ShellConfig {
                 prompt: raw.prompt,
                 args: raw.args,
             })),
-            "antigravity" => Ok(ShellConfig::Antigravity(AiShellConfig {
-                shell_type: raw.shell_type,
+            "antigravity" => Ok(PaneConfig::Antigravity(AiPaneConfig {
+                pane_type: raw.pane_type,
                 path: raw.path,
                 color: raw.color,
                 notes: raw.notes,
@@ -645,8 +648,8 @@ impl<'de> serde::Deserialize<'de> for ShellConfig {
                 prompt: raw.prompt,
                 args: raw.args,
             })),
-            _ => Ok(ShellConfig::Custom(CustomShellConfig {
-                shell_type: raw.shell_type,
+            _ => Ok(PaneConfig::Custom(CustomPaneConfig {
+                pane_type: raw.pane_type,
                 path: raw.path,
                 color: raw.color,
                 command: raw.command,
@@ -656,84 +659,84 @@ impl<'de> serde::Deserialize<'de> for ShellConfig {
     }
 }
 
-impl ShellConfig {
-    /// Get the shell type identifier
-    pub fn shell_type(&self) -> &str {
+impl PaneConfig {
+    /// Get the pane type identifier
+    pub fn pane_type(&self) -> &str {
         match self {
-            ShellConfig::Claude(c)
-            | ShellConfig::Codex(c)
-            | ShellConfig::Opencode(c)
-            | ShellConfig::Antigravity(c) => &c.shell_type,
-            ShellConfig::Custom(c) => &c.shell_type,
+            PaneConfig::Claude(c)
+            | PaneConfig::Codex(c)
+            | PaneConfig::Opencode(c)
+            | PaneConfig::Antigravity(c) => &c.pane_type,
+            PaneConfig::Custom(c) => &c.pane_type,
         }
     }
 
     /// Get the color if set
     pub fn color(&self) -> Option<&str> {
         match self {
-            ShellConfig::Claude(c)
-            | ShellConfig::Codex(c)
-            | ShellConfig::Opencode(c)
-            | ShellConfig::Antigravity(c) => c.color.as_deref(),
-            ShellConfig::Custom(c) => c.color.as_deref(),
+            PaneConfig::Claude(c)
+            | PaneConfig::Codex(c)
+            | PaneConfig::Opencode(c)
+            | PaneConfig::Antigravity(c) => c.color.as_deref(),
+            PaneConfig::Custom(c) => c.color.as_deref(),
         }
     }
 
     /// Set the color
     pub fn set_color(&mut self, color: String) {
         match self {
-            ShellConfig::Claude(c)
-            | ShellConfig::Codex(c)
-            | ShellConfig::Opencode(c)
-            | ShellConfig::Antigravity(c) => {
+            PaneConfig::Claude(c)
+            | PaneConfig::Codex(c)
+            | PaneConfig::Opencode(c)
+            | PaneConfig::Antigravity(c) => {
                 c.color = Some(color);
             }
-            ShellConfig::Custom(c) => c.color = Some(color),
+            PaneConfig::Custom(c) => c.color = Some(color),
         }
     }
 
     /// Get the path if set
     pub fn path(&self) -> Option<&str> {
         match self {
-            ShellConfig::Claude(c)
-            | ShellConfig::Codex(c)
-            | ShellConfig::Opencode(c)
-            | ShellConfig::Antigravity(c) => c.path.as_deref(),
-            ShellConfig::Custom(c) => c.path.as_deref(),
+            PaneConfig::Claude(c)
+            | PaneConfig::Codex(c)
+            | PaneConfig::Opencode(c)
+            | PaneConfig::Antigravity(c) => c.path.as_deref(),
+            PaneConfig::Custom(c) => c.path.as_deref(),
         }
     }
 
     /// Set the path
     pub fn set_path(&mut self, path: String) {
         match self {
-            ShellConfig::Claude(c)
-            | ShellConfig::Codex(c)
-            | ShellConfig::Opencode(c)
-            | ShellConfig::Antigravity(c) => {
+            PaneConfig::Claude(c)
+            | PaneConfig::Codex(c)
+            | PaneConfig::Opencode(c)
+            | PaneConfig::Antigravity(c) => {
                 c.path = Some(path);
             }
-            ShellConfig::Custom(c) => c.path = Some(path),
+            PaneConfig::Custom(c) => c.path = Some(path),
         }
     }
 
     /// Get notes
     pub fn notes(&self) -> &[String] {
         match self {
-            ShellConfig::Claude(c)
-            | ShellConfig::Codex(c)
-            | ShellConfig::Opencode(c)
-            | ShellConfig::Antigravity(c) => &c.notes,
-            ShellConfig::Custom(c) => &c.notes,
+            PaneConfig::Claude(c)
+            | PaneConfig::Codex(c)
+            | PaneConfig::Opencode(c)
+            | PaneConfig::Antigravity(c) => &c.notes,
+            PaneConfig::Custom(c) => &c.notes,
         }
     }
 }
 
-/// Configuration for AI shells (claude, codex, opencode)
+/// Configuration for AI panes (claude, codex, opencode, antigravity)
 #[derive(Debug, Deserialize, Clone, Default)]
-pub struct AiShellConfig {
-    /// The shell type identifier
+pub struct AiPaneConfig {
+    /// The pane type identifier
     #[serde(default, rename = "type")]
-    pub shell_type: String,
+    pub pane_type: String,
     /// Working directory path
     #[serde(default)]
     pub path: Option<String>,
@@ -763,11 +766,11 @@ pub struct AiShellConfig {
     pub args: Vec<String>,
 }
 
-/// Configuration for custom shell types
+/// Configuration for custom pane types
 #[derive(Debug, Clone)]
-pub struct CustomShellConfig {
+pub struct CustomPaneConfig {
     /// The type name
-    pub shell_type: String,
+    pub pane_type: String,
     /// Working directory path
     pub path: Option<String>,
     /// Pane background color
@@ -778,10 +781,10 @@ pub struct CustomShellConfig {
     pub notes: Vec<String>,
 }
 
-impl Default for CustomShellConfig {
+impl Default for CustomPaneConfig {
     fn default() -> Self {
         Self {
-            shell_type: "shell".to_string(),
+            pane_type: "shell".to_string(),
             path: None,
             color: None,
             command: None,
@@ -803,8 +806,8 @@ pub struct ResolvedPane {
     pub width: Option<u32>,
     /// Height percentage
     pub height: Option<u32>,
-    /// Shell configuration
-    pub config: ShellConfig,
+    /// Pane configuration
+    pub config: PaneConfig,
 }
 
 impl ResolvedPane {
@@ -875,76 +878,80 @@ skills:
   - path: ~/.config/axel/skills
 
 # =============================================================================
-# Shell definitions
+# Layouts
 # =============================================================================
-# Define shells that can be used in terminal profiles
-#
-# Built-in types: claude, codex, opencode, antigravity, shell
-# Custom types use the 'command' field
 
-shells:
-  # Claude Code - AI coding assistant
-  - type: claude
-    color: gray
-    skills:
-      - "*"                    # Load all skills, or list specific: ["skill1", "skill2"]
-    # model: sonnet            # Model: sonnet, opus, haiku
-    # prompt: "Your task..."   # Initial prompt
-    # allowed_tools: []        # Restrict to specific tools
-    # disallowed_tools: []     # Block specific tools
-    # args: []                 # Additional CLI arguments
+layouts:
+  # ---------------------------------------------------------------------------
+  # Pane definitions
+  # ---------------------------------------------------------------------------
+  # Define panes that can be used in grid layouts
+  #
+  # Built-in types: claude, codex, opencode, antigravity, shell
+  # Custom types use the 'command' field
 
-  # Codex - OpenAI coding assistant
-  - type: codex
-    color: green
-    skills:
-      - "*"
-    # model: o3-mini           # Model to use
-    # prompt: "Your task..."   # Initial prompt
-    # args: []                 # Additional CLI arguments
+  panes:
+    # Claude Code - AI coding assistant
+    - type: claude
+      color: gray
+      skills:
+        - "*"                    # Load all skills, or list specific: ["skill1", "skill2"]
+      # model: sonnet            # Model: sonnet, opus, haiku
+      # prompt: "Your task..."   # Initial prompt
+      # allowed_tools: []        # Restrict to specific tools
+      # disallowed_tools: []     # Block specific tools
+      # args: []                 # Additional CLI arguments
 
-  # OpenCode - Open-source coding assistant
-  # - type: opencode
-  #   color: blue
-  #   skills: ["*"]
+    # Codex - OpenAI coding assistant
+    - type: codex
+      color: green
+      skills:
+        - "*"
+      # model: o3-mini           # Model to use
+      # prompt: "Your task..."   # Initial prompt
+      # args: []                 # Additional CLI arguments
 
-  # Antigravity - Google coding assistant
-  # - type: antigravity
-  #   color: orange
-  #   skills: ["*"]
-  #   # model: gemini-3-pro    # Model to use
+    # OpenCode - Open-source coding assistant
+    # - type: opencode
+    #   color: blue
+    #   skills: ["*"]
 
-  # Regular shell with notes displayed on startup
-  - type: shell
-    notes:
-      - "$ axel -k {workspace}"
+    # Antigravity - Google coding assistant
+    # - type: antigravity
+    #   color: orange
+    #   skills: ["*"]
+    #   # model: gemini-3-pro    # Model to use
 
-  # Custom command example
-  # - type: logs
-  #   command: "tail -f /var/log/app.log"
-  #   color: red
+    # Regular shell with notes displayed on startup
+    - type: shell
+      notes:
+        - "$ axel -k {workspace}"
 
-# =============================================================================
-# Terminal profiles
-# =============================================================================
-# Layout configurations for tmux sessions
-#
-# Profile types:
-#   tmux    - Standard tmux session (default)
-#   tmux_cc - iTerm2 tmux integration mode
-#   shell   - No tmux, run first pane directly
-#
-# Pane positioning:
-#   col: 0, 1, 2...  - Column position (left to right)
-#   row: 0, 1, 2...  - Row position within column (top to bottom)
-#   width: 50        - Column width percentage
-#   height: 30       - Row height percentage
-#
-# Colors: purple, yellow, red, green, blue, gray, orange
+    # Custom command example
+    # - type: logs
+    #   command: "tail -f /var/log/app.log"
+    #   color: red
 
-terminal:
-  profiles:
-    # Default profile - two columns
+  # ---------------------------------------------------------------------------
+  # Grid layouts
+  # ---------------------------------------------------------------------------
+  # Layout configurations for tmux sessions
+  #
+  # Grid types:
+  #   tmux    - Standard tmux session (default)
+  #   tmux_cc - iTerm2 tmux integration mode
+  #   shell   - No tmux, run first pane directly
+  #
+  # Cell positioning:
+  #   col: 0, 1, 2...  - Column position (left to right)
+  #   row: 0, 1, 2...  - Row position within column (top to bottom)
+  #   width: 50        - Column width percentage
+  #   height: 30       - Row height percentage
+  #
+  # Colors: purple, yellow, red, green, blue, gray, orange
+
+  grids:
+    # Default grid - two columns
     default:
       type: tmux
       claude:
@@ -981,7 +988,7 @@ terminal:
 
 # {workspace}
 
-<!-- Project context for AI assistants. This content is used as initial context when launching shells. -->
+<!-- Project context for AI assistants. This content is used as initial context when launching panes. -->
 
 ## Overview
 

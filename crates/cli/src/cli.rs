@@ -166,6 +166,16 @@ pub enum Commands {
         action: SessionCommands,
     },
 
+    /// Query available layouts from workspace AXEL.md.
+    ///
+    /// Lists pane definitions and grid layouts from the manifest file.
+    /// Useful for programmatic access to workspace layout options.
+    #[command(visible_alias = "layouts")]
+    Layout {
+        #[command(subcommand)]
+        action: LayoutCommands,
+    },
+
     /// Run the axel event server.
     ///
     /// Starts an HTTP server that receives Claude Code hook events and OTEL
@@ -243,6 +253,22 @@ pub enum SkillCommands {
     Rm {
         /// Name of the skill to remove
         name: String,
+    },
+}
+
+/// Layout listing subcommands.
+///
+/// Query available panes and grids defined in the workspace AXEL.md manifest.
+#[derive(Subcommand)]
+pub enum LayoutCommands {
+    /// List all pane definitions in AXEL.md.
+    ///
+    /// Outputs pane configurations in JSON format for programmatic use.
+    #[command(visible_alias = "ls")]
+    List {
+        /// Output in JSON format (default: true)
+        #[arg(long, default_value = "true")]
+        json: bool,
     },
 }
 

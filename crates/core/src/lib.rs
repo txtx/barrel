@@ -18,8 +18,8 @@ pub mod tmux;
 
 // Re-export commonly used types at crate root
 pub use config::{
-    AiShellConfig, CustomShellConfig, Profile, ProfilePane, ProfileType, ResolvedPane, ShellConfig,
-    Skill, SkillPathConfig, TerminalConfig, WorkspaceConfig, WorkspaceIndex,
+    AiPaneConfig, CustomPaneConfig, Grid, GridCell, GridType, LayoutsConfig, PaneConfig,
+    ResolvedPane, Skill, SkillPathConfig, WorkspaceConfig, WorkspaceIndex,
 };
 pub use drivers::{ClaudeDriver, CodexDriver, OpenCodeDriver, SkillDriver, all_skill_patterns};
 pub use hooks::{
