@@ -463,6 +463,7 @@ pub fn bind_key(table: &str, key: &str, command: &[&str]) -> Result<()> {
 pub struct SetOption<'a> {
     target: Option<&'a str>,
     global: bool,
+    server: bool,
     window: bool,
     option: Option<&'a str>,
     value: Option<&'a str>,
@@ -484,6 +485,12 @@ impl<'a> SetOption<'a> {
     /// Set as a global option
     pub fn global(mut self) -> Self {
         self.global = true;
+        self
+    }
+
+    /// Set as a server option
+    pub fn server(mut self) -> Self {
+        self.server = true;
         self
     }
 
@@ -517,6 +524,10 @@ impl<'a> SetOption<'a> {
 
         if self.global {
             args.push("-g");
+        }
+
+        if self.server {
+            args.push("-s");
         }
 
         if let Some(target) = self.target {

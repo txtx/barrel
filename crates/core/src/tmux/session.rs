@@ -32,7 +32,7 @@ use super::commands::{
 use crate::{
     claude::ClaudeCommand,
     config::{
-        AiShellConfig, ResolvedPane, ShellConfig, WorkspaceConfig, WorkspaceIndex, expand_path,
+        AiPaneConfig, PaneConfig, ResolvedPane, WorkspaceConfig, WorkspaceIndex, expand_path,
         to_fg_rgb, to_tmux_color,
     },
     drivers,
@@ -83,7 +83,7 @@ const PANE_BORDER_FORMAT: &str = "#[align=centre] #{pane_title} ";
 /// Environment variable name for storing manifest path in tmux session
 pub const AXEL_MANIFEST_ENV: &str = "AXEL_MANIFEST";
 
-/// Build the command string for an AI shell (Claude or OpenCode).
+/// Build the command string for an AI pane (Claude or OpenCode).
 ///
 /// Both Claude Code and OpenCode use similar CLI interfaces, so this function
 /// handles both by parameterizing the command name. The command is built using
@@ -93,7 +93,7 @@ pub const AXEL_MANIFEST_ENV: &str = "AXEL_MANIFEST";
 /// CLAUDE.md symlink for Claude (installed by the driver).
 fn build_ai_command(
     command_name: &str,
-    config: &AiShellConfig,
+    config: &AiPaneConfig,
     _index: Option<&WorkspaceIndex>,
 ) -> String {
     let mut cmd = ClaudeCommand::new();
@@ -132,7 +132,7 @@ fn build_ai_command(
 /// The CLI interface supports:
 /// - `-m` for model selection
 /// - Initial prompt as a positional argument
-fn build_antigravity_command(config: &AiShellConfig, index: Option<&WorkspaceIndex>) -> String {
+fn build_antigravity_command(config: &AiPaneConfig, index: Option<&WorkspaceIndex>) -> String {
     let mut parts = vec!["antigravity".to_string()];
 
     if let Some(model) = &config.model {
@@ -166,7 +166,7 @@ fn build_antigravity_command(config: &AiShellConfig, index: Option<&WorkspaceInd
 /// The command includes `-c 'project_doc_fallback_filenames=[".codex/AGENTS.md"]'`
 /// to ensure Codex discovers the merged skills file created by the driver.
 fn build_codex_command(
-    config: &AiShellConfig,
+    config: &AiPaneConfig,
     _workspace_dir: Option<&std::path::Path>,
     index: Option<&WorkspaceIndex>,
 ) -> String {
@@ -204,11 +204,11 @@ pub fn build_pane_command(
     index: Option<&WorkspaceIndex>,
 ) -> Option<String> {
     match &pane.config {
-        ShellConfig::Claude(config) => Some(build_ai_command("claude", config, index)),
-        ShellConfig::Codex(config) => Some(build_codex_command(config, workspace_dir, index)),
-        ShellConfig::Opencode(config) => Some(build_ai_command("opencode", config, index)),
-        ShellConfig::Antigravity(config) => Some(build_antigravity_command(config, index)),
-        ShellConfig::Custom(config) => config.command.clone(),
+        PaneConfig::Claude(config) => Some(build_ai_command("claude", config, index)),
+        PaneConfig::Codex(config) => Some(build_codex_command(config, workspace_dir, index)),
+        PaneConfig::Opencode(config) => Some(build_ai_command("opencode", config, index)),
+        PaneConfig::Antigravity(config) => Some(build_antigravity_command(config, index)),
+        PaneConfig::Custom(config) => config.command.clone(),
     }
 }
 
@@ -247,11 +247,11 @@ pub fn create_workspace(
 
     for pane in &panes {
         match &pane.config {
-            ShellConfig::Claude(c) => claude_skills.extend(c.skills.iter().cloned()),
-            ShellConfig::Codex(c) => codex_skills.extend(c.skills.iter().cloned()),
-            ShellConfig::Opencode(c) => opencode_skills.extend(c.skills.iter().cloned()),
-            ShellConfig::Antigravity(c) => antigravity_skills.extend(c.skills.iter().cloned()),
-            ShellConfig::Custom(_) => {}
+            PaneConfig::Claude(c) => claude_skills.extend(c.skills.iter().cloned()),
+            PaneConfig::Codex(c) => codex_skills.extend(c.skills.iter().cloned()),
+            PaneConfig::Opencode(c) => opencode_skills.extend(c.skills.iter().cloned()),
+            PaneConfig::Antigravity(c) => antigravity_skills.extend(c.skills.iter().cloned()),
+            PaneConfig::Custom(_) => {}
         }
     }
     claude_skills.dedup();
@@ -296,11 +296,11 @@ pub fn create_workspace(
         let driver_names: Vec<&str> = panes
             .iter()
             .filter_map(|p| match &p.config {
-                ShellConfig::Claude(_) => Some("claude"),
-                ShellConfig::Codex(_) => Some("codex"),
-                ShellConfig::Opencode(_) => Some("opencode"),
-                ShellConfig::Antigravity(_) => Some("antigravity"),
-                ShellConfig::Custom(_) => None,
+                PaneConfig::Claude(_) => Some("claude"),
+                PaneConfig::Codex(_) => Some("codex"),
+                PaneConfig::Opencode(_) => Some("opencode"),
+                PaneConfig::Antigravity(_) => Some("antigravity"),
+                PaneConfig::Custom(_) => None,
             })
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
@@ -360,6 +360,18 @@ pub fn create_workspace(
     }
 
     // Configure session options
+    SetOption::new()
+        .server()
+        .option(OPT_MOUSE)
+        .value(VAL_ON)
+        .run()?;
+
+    SetOption::new()
+        .global()
+        .option(OPT_MOUSE)
+        .value(VAL_ON)
+        .run()?;
+
     SetOption::new()
         .target(session_name)
         .option(OPT_MOUSE)
@@ -459,7 +471,18 @@ pub fn create_workspace(
         ],
     )
     .ok();
-    bind_key(KEY_TABLE_ROOT, KEY_WHEEL_DOWN, &["send-keys", "-M"]).ok();
+    bind_key(
+        KEY_TABLE_ROOT,
+        KEY_WHEEL_DOWN,
+        &[
+            "if-shell",
+            "-F",
+            "#{alternate_on}",
+            "send-keys -M",
+            "copy-mode -e; send-keys -M",
+        ],
+    )
+    .ok();
 
     rename_window(session_name, &config.workspace)?;
 

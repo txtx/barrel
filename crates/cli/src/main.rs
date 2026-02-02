@@ -33,12 +33,12 @@ use axel_core::{
     tmux::{attach_session, current_session, has_session},
 };
 use clap::{CommandFactory, Parser};
-use cli::{Cli, Commands, SessionCommands, SkillCommands};
+use cli::{Cli, Commands, LayoutCommands, SessionCommands, SkillCommands};
 use colored::Colorize;
 use commands::{
     session::{
         do_kill_all_sessions, do_kill_workspace, do_list_sessions, launch_from_manifest,
-        launch_shell_by_name,
+        launch_pane_by_name,
     },
     skill::{fork_skill, import_skill, link_skill, list_skills, new_skill, rm_skill},
 };
@@ -130,7 +130,7 @@ fn main() -> Result<()> {
                 SessionCommands::List { all } => do_list_sessions(!all),
                 SessionCommands::New { shell } => {
                     if let Some(name) = shell {
-                        launch_shell_by_name(&manifest_path, &name, None, None, None, false, None)
+                        launch_pane_by_name(&manifest_path, &name, None, None, None, false, None)
                     } else {
                         launch_from_manifest(&manifest_path, cli.profile.as_deref())
                     }
@@ -179,6 +179,11 @@ fn main() -> Result<()> {
                     commands::server::run(commands::server::ServerArgs { port, session, log }).await
                 })
             }
+            Commands::Layout { action } => match action {
+                LayoutCommands::List { json } => {
+                    commands::layout::list_panes(cli.manifest_path.as_deref(), json)
+                }
+            },
         };
     }
 
@@ -218,7 +223,7 @@ fn main() -> Result<()> {
         if name == "setup" {
             setup_axel()?;
         } else if manifest_path.exists() {
-            launch_shell_by_name(
+            launch_pane_by_name(
                 &manifest_path,
                 name,
                 cli.prompt.as_deref(),
