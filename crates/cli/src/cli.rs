@@ -291,11 +291,55 @@ pub enum SessionCommands {
 
     /// Create a new workspace session.
     ///
-    /// Equivalent to running `axel` or `axel <shell>`. Launches a workspace
-    /// from the AXEL.md manifest in the current directory.
+    /// This is the primary way to launch panes and grids from the macOS app.
+    ///
+    /// **Examples:**
+    /// - `axel session new` - Launch full default grid
+    /// - `axel session new claude` - Launch single claude pane
+    /// - `axel session new --grid wide` - Launch the "wide" grid layout
+    /// - `axel session new claude --pane-id %5 --port 4320` - macOS app mode
     New {
-        /// Shell name to launch (from AXEL.md), or launches full workspace if omitted
-        shell: Option<String>,
+        /// Pane name to launch (from AXEL.md panes section).
+        /// If omitted, launches the full grid layout.
+        #[arg(value_name = "PANE")]
+        pane: Option<String>,
+
+        /// Grid layout to launch (from AXEL.md grids section).
+        /// Use this to launch a specific grid instead of the default.
+        /// Cannot be used with a pane name.
+        #[arg(long, value_name = "GRID", conflicts_with = "pane")]
+        grid: Option<String>,
+
+        /// Name for the tmux session.
+        /// If not specified, a name is generated: `{workspace}` for grids,
+        /// or `{workspace}-{pane}-{index}` for single panes.
+        #[arg(long, value_name = "NAME")]
+        session_name: Option<String>,
+
+        /// Target tmux pane ID for macOS app integration.
+        /// When specified, sends output to an existing pane instead of
+        /// creating a new session.
+        #[arg(long, value_name = "PANE_ID")]
+        pane_id: Option<String>,
+
+        /// Port for the embedded event server (hooks and OTEL telemetry).
+        /// Used by the macOS app to receive Claude events.
+        #[arg(long, value_name = "PORT")]
+        port: Option<u16>,
+
+        /// Prompt text to send to the pane on startup.
+        /// Overrides the prompt defined in AXEL.md.
+        #[arg(long, value_name = "TEXT")]
+        prompt: Option<String>,
+
+        /// Create/use git worktree for branch and launch workspace from there.
+        #[arg(short = 'w', long = "worktree", value_name = "BRANCH")]
+        worktree: Option<String>,
+
+        /// Create a tmux session even for single pane launch.
+        /// By default, single panes run directly without tmux.
+        #[arg(long)]
+        tmux: bool,
     },
 
     /// Join (attach to) an existing session.

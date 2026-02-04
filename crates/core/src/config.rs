@@ -555,6 +555,11 @@ pub struct GridCell {
 struct PaneConfigRaw {
     #[serde(rename = "type")]
     pane_type: String,
+    /// Unique name for the pane (used to reference in grids)
+    /// For AI types (claude, codex, etc.), defaults to the type name
+    /// For custom types, this must be provided to create unique identifiers
+    #[serde(default)]
+    name: Option<String>,
     #[serde(default)]
     path: Option<String>,
     #[serde(default)]
@@ -601,7 +606,8 @@ impl<'de> serde::Deserialize<'de> for PaneConfig {
 
         match raw.pane_type.as_str() {
             "claude" => Ok(PaneConfig::Claude(AiPaneConfig {
-                pane_type: raw.pane_type,
+                pane_type: raw.pane_type.clone(),
+                name: raw.name.or(Some(raw.pane_type)),
                 path: raw.path,
                 color: raw.color,
                 notes: raw.notes,
@@ -613,7 +619,8 @@ impl<'de> serde::Deserialize<'de> for PaneConfig {
                 args: raw.args,
             })),
             "codex" => Ok(PaneConfig::Codex(AiPaneConfig {
-                pane_type: raw.pane_type,
+                pane_type: raw.pane_type.clone(),
+                name: raw.name.or(Some(raw.pane_type)),
                 path: raw.path,
                 color: raw.color,
                 notes: raw.notes,
@@ -625,7 +632,8 @@ impl<'de> serde::Deserialize<'de> for PaneConfig {
                 args: raw.args,
             })),
             "opencode" => Ok(PaneConfig::Opencode(AiPaneConfig {
-                pane_type: raw.pane_type,
+                pane_type: raw.pane_type.clone(),
+                name: raw.name.or(Some(raw.pane_type)),
                 path: raw.path,
                 color: raw.color,
                 notes: raw.notes,
@@ -637,7 +645,8 @@ impl<'de> serde::Deserialize<'de> for PaneConfig {
                 args: raw.args,
             })),
             "antigravity" => Ok(PaneConfig::Antigravity(AiPaneConfig {
-                pane_type: raw.pane_type,
+                pane_type: raw.pane_type.clone(),
+                name: raw.name.or(Some(raw.pane_type)),
                 path: raw.path,
                 color: raw.color,
                 notes: raw.notes,
@@ -648,8 +657,25 @@ impl<'de> serde::Deserialize<'de> for PaneConfig {
                 prompt: raw.prompt,
                 args: raw.args,
             })),
+            // "custom" type requires a name field
+            "custom" => {
+                let name = raw.name.ok_or_else(|| {
+                    serde::de::Error::custom("custom pane type requires a 'name' field")
+                })?;
+                Ok(PaneConfig::Custom(CustomPaneConfig {
+                    pane_type: raw.pane_type,
+                    name,
+                    path: raw.path,
+                    color: raw.color,
+                    command: raw.command,
+                    notes: raw.notes,
+                }))
+            }
+            // Legacy: "shell" and other unknown types become custom panes
+            // The type becomes the name for backwards compatibility
             _ => Ok(PaneConfig::Custom(CustomPaneConfig {
-                pane_type: raw.pane_type,
+                pane_type: "custom".to_string(),
+                name: raw.name.unwrap_or(raw.pane_type),
                 path: raw.path,
                 color: raw.color,
                 command: raw.command,
@@ -660,8 +686,21 @@ impl<'de> serde::Deserialize<'de> for PaneConfig {
 }
 
 impl PaneConfig {
-    /// Get the pane type identifier
+    /// Get the unique pane identifier (name) for referencing in grids
+    /// For AI panes, this defaults to the type (claude, codex, etc.) unless overridden
+    /// For custom panes, this is the required name field
     pub fn pane_type(&self) -> &str {
+        match self {
+            PaneConfig::Claude(c)
+            | PaneConfig::Codex(c)
+            | PaneConfig::Opencode(c)
+            | PaneConfig::Antigravity(c) => c.name.as_deref().unwrap_or(&c.pane_type),
+            PaneConfig::Custom(c) => &c.name,
+        }
+    }
+
+    /// Get the actual type (claude, codex, custom, etc.)
+    pub fn actual_type(&self) -> &str {
         match self {
             PaneConfig::Claude(c)
             | PaneConfig::Codex(c)
@@ -734,9 +773,12 @@ impl PaneConfig {
 /// Configuration for AI panes (claude, codex, opencode, antigravity)
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct AiPaneConfig {
-    /// The pane type identifier
+    /// The pane type identifier (claude, codex, etc.)
     #[serde(default, rename = "type")]
     pub pane_type: String,
+    /// Unique name for referencing in grids (defaults to pane_type)
+    #[serde(default)]
+    pub name: Option<String>,
     /// Working directory path
     #[serde(default)]
     pub path: Option<String>,
@@ -769,8 +811,10 @@ pub struct AiPaneConfig {
 /// Configuration for custom pane types
 #[derive(Debug, Clone)]
 pub struct CustomPaneConfig {
-    /// The type name
+    /// The type (e.g., "custom", "shell", or a custom type name)
     pub pane_type: String,
+    /// Unique name for referencing in grids (required for custom panes)
+    pub name: String,
     /// Working directory path
     pub path: Option<String>,
     /// Pane background color
@@ -784,7 +828,8 @@ pub struct CustomPaneConfig {
 impl Default for CustomPaneConfig {
     fn default() -> Self {
         Self {
-            pane_type: "shell".to_string(),
+            pane_type: "custom".to_string(),
+            name: "shell".to_string(),
             path: None,
             color: None,
             command: None,

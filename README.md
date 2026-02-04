@@ -42,10 +42,12 @@ layouts:
   panes:
     - type: claude
       skills: ["*"]
-    - type: backend
+    - type: custom
+      name: backend
       command: npm run dev
       path: ./backend
-    - type: frontend
+    - type: custom
+      name: frontend
       command: pnpm dev
       path: ./frontend
 
@@ -132,7 +134,8 @@ axel session join <name>      # Attach to a session
 axel session kill <name>      # Kill a session
 
 # Layouts
-axel layout ls                # List available panes
+axel layout ls                # List panes and grids (JSON output)
+axel layout ls --json         # Explicit JSON format
 
 # Skills
 axel skill list               # List all skills
@@ -154,7 +157,7 @@ Define panes and grid layouts in the `layouts` section:
 layouts:
   # Pane definitions - what runs in each pane
   panes:
-    # AI assistants
+    # AI assistants (built-in types: claude, codex, opencode, antigravity)
     - type: claude
       skills: ["code-reviewer", "frontend-engineer"]
       model: sonnet
@@ -162,19 +165,24 @@ layouts:
     - type: codex
       skills: ["*"]  # All skills
 
-    - type: antigravity
-      skills: ["*"]
+    # Custom panes - use type: custom with unique names
+    - type: custom
+      name: shell
+      notes:
+        - "Free shell for commands"
 
-    # Custom commands
-    - type: backend
+    - type: custom
+      name: backend
       path: ./backend
       command: npm run dev
 
-    - type: frontend
+    - type: custom
+      name: frontend
       path: ./frontend
       command: pnpm dev
 
   # Grid layouts - how panes are arranged
+  # Reference panes by their name (claude, codex, shell, backend, frontend)
   grids:
     default:
       type: tmux  # tmux, tmux_cc (iTerm2), or shell

@@ -38,7 +38,7 @@ use colored::Colorize;
 use commands::{
     session::{
         do_kill_all_sessions, do_kill_workspace, do_list_sessions, launch_from_manifest,
-        launch_pane_by_name,
+        launch_grid_by_name, launch_pane_by_name,
     },
     skill::{fork_skill, import_skill, link_skill, list_skills, new_skill, rm_skill},
 };
@@ -128,10 +128,86 @@ fn main() -> Result<()> {
             },
             Commands::Session { action } => match action {
                 SessionCommands::List { all } => do_list_sessions(!all),
-                SessionCommands::New { shell } => {
-                    if let Some(name) = shell {
-                        launch_pane_by_name(&manifest_path, &name, None, None, None, false, None)
+                SessionCommands::New {
+                    pane,
+                    grid,
+                    session_name,
+                    pane_id,
+                    port,
+                    prompt,
+                    worktree,
+                    tmux,
+                } => {
+                    // Handle git worktree if specified at subcommand level
+                    if let Some(ref branch) = worktree {
+                        let cwd = std::env::current_dir()?;
+                        if !git::is_git_repo(&cwd) {
+                            eprintln!("{} Not a git repository", "✘".red());
+                            std::process::exit(1);
+                        }
+
+                        match git::ensure_worktree(&cwd, branch) {
+                            Ok(info) => {
+                                if info.created {
+                                    if info.branch_created {
+                                        eprintln!(
+                                            "{} {} {} (from {})",
+                                            "✔".green(),
+                                            "Created branch".dimmed(),
+                                            info.branch.blue(),
+                                            git::default_branch(&cwd)
+                                                .unwrap_or_else(|_| "HEAD".to_string())
+                                        );
+                                    }
+                                    eprintln!(
+                                        "{} {} {}",
+                                        "✔".green(),
+                                        "Created worktree at".dimmed(),
+                                        display_path(&info.path)
+                                    );
+                                } else {
+                                    eprintln!(
+                                        "{} {} {}",
+                                        "✔".green(),
+                                        "Using existing worktree at".dimmed(),
+                                        display_path(&info.path)
+                                    );
+                                }
+                                // Change to worktree directory
+                                std::env::set_current_dir(&info.path)?;
+                            }
+                            Err(e) => {
+                                eprintln!("{} Failed to create worktree: {}", "✘".red(), e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+
+                    // Re-resolve manifest path after potential worktree change
+                    let manifest_path = resolve_manifest_path(cli.manifest_path.as_deref());
+
+                    if let Some(name) = pane {
+                        // Launch a specific pane
+                        launch_pane_by_name(
+                            &manifest_path,
+                            &name,
+                            prompt.as_deref(),
+                            pane_id.as_deref(),
+                            port,
+                            tmux,
+                            session_name.as_deref(),
+                        )
+                    } else if let Some(grid_name) = grid {
+                        // Launch a specific grid layout
+                        launch_grid_by_name(
+                            &manifest_path,
+                            &grid_name,
+                            session_name.as_deref(),
+                            pane_id.as_deref(),
+                            port,
+                        )
                     } else {
+                        // Launch the default grid (full workspace)
                         launch_from_manifest(&manifest_path, cli.profile.as_deref())
                     }
                 }

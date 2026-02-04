@@ -254,6 +254,187 @@ pub fn do_kill_workspace(
 // Session Launching
 // =============================================================================
 
+/// Launch a specific grid layout by name.
+///
+/// This allows launching a non-default grid from `axel session new --grid <name>`.
+/// When `pane_id` and `port` are provided (macOS app mode), the embedded server is started
+/// and Claude hooks are configured for the first AI pane in the grid.
+pub fn launch_grid_by_name(
+    config_path: &Path,
+    grid_name: &str,
+    session_name: Option<&str>,
+    pane_id: Option<&str>,
+    server_port: Option<u16>,
+) -> Result<()> {
+    if !config_path.exists() {
+        eprintln!(
+            "{}",
+            format!("Manifest not found: {}", config_path.display()).red()
+        );
+        std::process::exit(1);
+    }
+
+    // Use provided port or default to 4318
+    let port = server_port.unwrap_or(4318);
+
+    // If port is provided (macOS app mode), start embedded server in background thread
+    if server_port.is_some() {
+        start_embedded_server(port, pane_id)?;
+    }
+
+    let config = load_config(config_path)?;
+
+    // Validate grid exists
+    if !config.layouts.grids.contains_key(grid_name) {
+        let available: Vec<&str> = config.layouts.grids.keys().map(|s| s.as_str()).collect();
+        eprintln!(
+            "{} Grid '{}' not found. Available grids: {}",
+            "✘".red(),
+            grid_name,
+            available.join(", ")
+        );
+        std::process::exit(1);
+    }
+
+    // Configure hooks/OTEL for AI panes if pane_id is provided (macOS app mode)
+    if let Some(pane_id) = pane_id {
+        let current_dir = std::env::current_dir().ok();
+        if let Some(ref install_dir) = current_dir {
+            let panes = config.resolve_panes(Some(grid_name));
+
+            // Configure Claude hooks (uses settings file)
+            let has_claude = panes
+                .iter()
+                .any(|p| matches!(p.config, PaneConfig::Claude(_)));
+            if has_claude {
+                let hooks_settings = generate_hooks_settings(port, pane_id);
+                let hooks_path = settings_path(install_dir);
+                if write_settings(&hooks_settings, &hooks_path).is_ok() {
+                    eprintln!(
+                        "{} {} Claude hooks for pane {} (port {})",
+                        "✔".green(),
+                        "Configured".dimmed(),
+                        &pane_id[..8.min(pane_id.len())],
+                        port
+                    );
+                }
+            }
+
+            // Note: Codex/OpenCode OTEL is configured via CLI args at tmux pane creation time.
+            // For grids, this happens in tmux_create_workspace() which builds the command for each pane.
+        }
+    }
+
+    let grid_type = config.grid_type(Some(grid_name));
+
+    // Use provided session name or derive from workspace
+    let session = session_name.map(|s| s.to_string()).unwrap_or_else(|| {
+        config_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| config.workspace.clone())
+    });
+
+    if has_session(&session) {
+        println!(
+            "{}",
+            format!("Attaching to existing session: {}", session).blue()
+        );
+        return match grid_type {
+            GridType::TmuxCC => {
+                std::process::Command::new("tmux")
+                    .args(["-CC", "attach-session", "-t", &session])
+                    .status()?;
+                Ok(())
+            }
+            _ => attach_session(&session),
+        };
+    }
+
+    match grid_type {
+        GridType::Shell => launch_shell_mode(&config, Some(grid_name)),
+        GridType::TmuxCC => {
+            launch_tmux_cc_mode_with_grid(config_path, &config, grid_name, &session)
+        }
+        GridType::Tmux => launch_tmux_mode_with_grid(&config, grid_name, &session),
+    }
+}
+
+/// Launch in tmux control mode (-CC) for iTerm2 integration with a specific grid.
+fn launch_tmux_cc_mode_with_grid(
+    config_path: &Path,
+    config: &axel_core::WorkspaceConfig,
+    grid_name: &str,
+    session_name: &str,
+) -> Result<()> {
+    if has_session(session_name) {
+        println!(
+            "{}",
+            format!("Attaching to existing session (CC mode): {}", session_name).blue()
+        );
+        std::process::Command::new("tmux")
+            .args(["-CC", "attach-session", "-t", session_name])
+            .status()?;
+        return Ok(());
+    }
+
+    tmux_create_workspace(session_name, config, Some(grid_name))?;
+
+    // Tag session with manifest path
+    let manifest_str = config_path.to_string_lossy();
+    set_environment(session_name, AXEL_MANIFEST_ENV, &manifest_str).ok();
+
+    println!(
+        "{} {} {} (grid: {})",
+        "✔".green(),
+        "Created tmux session (CC mode)".dimmed(),
+        session_name,
+        grid_name
+    );
+
+    std::process::Command::new("tmux")
+        .args(["-CC", "attach-session", "-t", session_name])
+        .status()?;
+
+    Ok(())
+}
+
+/// Launch in standard tmux mode with a specific grid.
+fn launch_tmux_mode_with_grid(
+    config: &axel_core::WorkspaceConfig,
+    grid_name: &str,
+    session_name: &str,
+) -> Result<()> {
+    if has_session(session_name) {
+        println!(
+            "{}",
+            format!("Attaching to existing session: {}", session_name).blue()
+        );
+        attach_session(session_name)?;
+        return Ok(());
+    }
+
+    tmux_create_workspace(session_name, config, Some(grid_name))?;
+
+    // Tag session with manifest path
+    if let Some(ref manifest_path) = config.manifest_path {
+        let manifest_str = manifest_path.to_string_lossy();
+        set_environment(session_name, AXEL_MANIFEST_ENV, &manifest_str).ok();
+    }
+
+    println!(
+        "{} {} {} (grid: {})",
+        "✔".green(),
+        "Created tmux session".dimmed(),
+        session_name,
+        grid_name
+    );
+    attach_session(session_name)?;
+
+    Ok(())
+}
+
 /// Launch a workspace from a manifest file.
 ///
 /// This is the main launch path when running `axel` with an `AXEL.md` present.
