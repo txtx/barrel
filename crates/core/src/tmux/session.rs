@@ -36,7 +36,15 @@ use crate::{
         to_fg_rgb, to_tmux_color,
     },
     drivers,
+    hooks::{otel_logs_endpoint, otel_metrics_endpoint, otel_traces_endpoint},
 };
+
+/// OTEL configuration for pane commands (used by macOS app integration)
+#[derive(Clone)]
+pub struct OtelConfig {
+    pub port: u16,
+    pub pane_id: String,
+}
 
 // =============================================================================
 // Tmux option keys
@@ -82,6 +90,12 @@ const PANE_BORDER_FORMAT: &str = "#[align=centre] #{pane_title} ";
 
 /// Environment variable name for storing manifest path in tmux session
 pub const AXEL_MANIFEST_ENV: &str = "AXEL_MANIFEST";
+
+/// Environment variable name for storing the server port in tmux session
+pub const AXEL_PORT_ENV: &str = "AXEL_PORT";
+
+/// Environment variable name for storing the pane ID in tmux session
+pub const AXEL_PANE_ID_ENV: &str = "AXEL_PANE_ID";
 
 /// Build the command string for an AI pane (Claude or OpenCode).
 ///
@@ -169,12 +183,48 @@ fn build_codex_command(
     config: &AiPaneConfig,
     _workspace_dir: Option<&std::path::Path>,
     index: Option<&WorkspaceIndex>,
+    otel_config: Option<&OtelConfig>,
 ) -> String {
     let mut parts = vec!["codex".to_string()];
 
     // Add .codex/AGENTS.md to fallback filenames so Codex discovers it
     parts.push("-c".to_string());
     parts.push("'project_doc_fallback_filenames=[\".codex/AGENTS.md\"]'".to_string());
+
+    // Add OTEL configuration if provided (macOS app integration)
+    if let Some(otel) = otel_config {
+        let logs_endpoint = otel_logs_endpoint(otel.port, &otel.pane_id);
+        let traces_endpoint = otel_traces_endpoint(otel.port, &otel.pane_id);
+        let metrics_endpoint = otel_metrics_endpoint(otel.port, &otel.pane_id);
+
+        // Enable analytics (required for metrics export)
+        parts.push("-c".to_string());
+        parts.push("'analytics_enabled=true'".to_string());
+        // Enable bell notifications for approvals (allows tmux to detect them)
+        parts.push("-c".to_string());
+        parts.push("'tui_notifications=\"always\"'".to_string());
+        parts.push("-c".to_string());
+        parts.push("'tui_notification_method=\"bel\"'".to_string());
+        // Disable paste burst detection so tmux send-keys works correctly
+        parts.push("-c".to_string());
+        parts.push("'disable_paste_burst=true'".to_string());
+        // Configure OTEL exporters
+        parts.push("-c".to_string());
+        parts.push(format!(
+            r#"'otel.exporter={{otlp-http={{endpoint="{}",protocol="json"}}}}'"#,
+            logs_endpoint
+        ));
+        parts.push("-c".to_string());
+        parts.push(format!(
+            r#"'otel.trace_exporter={{otlp-http={{endpoint="{}",protocol="json"}}}}'"#,
+            traces_endpoint
+        ));
+        parts.push("-c".to_string());
+        parts.push(format!(
+            r#"'otel.metrics_exporter={{otlp-http={{endpoint="{}",protocol="json"}}}}'"#,
+            metrics_endpoint
+        ));
+    }
 
     if let Some(model) = &config.model {
         parts.push("-m".to_string());
@@ -202,10 +252,16 @@ pub fn build_pane_command(
     pane: &ResolvedPane,
     workspace_dir: Option<&std::path::Path>,
     index: Option<&WorkspaceIndex>,
+    otel_config: Option<&OtelConfig>,
 ) -> Option<String> {
     match &pane.config {
         PaneConfig::Claude(config) => Some(build_ai_command("claude", config, index)),
-        PaneConfig::Codex(config) => Some(build_codex_command(config, workspace_dir, index)),
+        PaneConfig::Codex(config) => Some(build_codex_command(
+            config,
+            workspace_dir,
+            index,
+            otel_config,
+        )),
         PaneConfig::Opencode(config) => Some(build_ai_command("opencode", config, index)),
         PaneConfig::Antigravity(config) => Some(build_antigravity_command(config, index)),
         PaneConfig::Custom(config) => config.command.clone(),
@@ -226,10 +282,14 @@ pub fn build_pane_command(
 /// The layout algorithm groups panes by column, creates columns via horizontal
 /// splits, then creates rows within each column via vertical splits. Width/height
 /// percentages are applied during the split operations.
+///
+/// The optional `otel_config` parameter enables OTEL telemetry for non-Claude
+/// AI panes (Codex, OpenCode) when launched from the macOS app.
 pub fn create_workspace(
     session_name: &str,
     config: &WorkspaceConfig,
     profile: Option<&str>,
+    otel_config: Option<OtelConfig>,
 ) -> Result<()> {
     let mut panes = config.resolve_panes(profile);
     let workspace_dir = config.workspace_dir();
@@ -357,6 +417,12 @@ pub fn create_workspace(
         && let Some(path_str) = manifest_path.to_str()
     {
         set_environment(session_name, AXEL_MANIFEST_ENV, path_str).ok();
+    }
+
+    // Store OTEL config (port and pane_id) in session environment for recovery
+    if let Some(ref otel) = otel_config {
+        set_environment(session_name, AXEL_PORT_ENV, &otel.port.to_string()).ok();
+        set_environment(session_name, AXEL_PANE_ID_ENV, &otel.pane_id).ok();
     }
 
     // Configure session options
@@ -495,7 +561,12 @@ pub fn create_workspace(
     let first_pane_target = format!("{}:0.0", session_name);
     let first_id = get_pane_id(&first_pane_target)?;
 
-    if let Some(cmd) = build_pane_command(first_pane, workspace_dir.as_deref(), index.as_ref()) {
+    if let Some(cmd) = build_pane_command(
+        first_pane,
+        workspace_dir.as_deref(),
+        index.as_ref(),
+        otel_config.as_ref(),
+    ) {
         std::thread::sleep(std::time::Duration::from_millis(200));
         send_keys(&first_id, &cmd)?;
     }
@@ -535,9 +606,12 @@ pub fn create_workspace(
         let new_id = split.run()?;
         all_panes.push((new_id.clone(), first_col_pane.clone()));
 
-        if let Some(cmd) =
-            build_pane_command(first_col_pane, workspace_dir.as_deref(), index.as_ref())
-        {
+        if let Some(cmd) = build_pane_command(
+            first_col_pane,
+            workspace_dir.as_deref(),
+            index.as_ref(),
+            otel_config.as_ref(),
+        ) {
             std::thread::sleep(std::time::Duration::from_millis(200));
             send_keys(&new_id, &cmd)?;
         }
@@ -580,7 +654,12 @@ pub fn create_workspace(
 
             all_panes.push((new_id.clone(), pane.clone()));
 
-            if let Some(cmd) = build_pane_command(pane, workspace_dir.as_deref(), index.as_ref()) {
+            if let Some(cmd) = build_pane_command(
+                pane,
+                workspace_dir.as_deref(),
+                index.as_ref(),
+                otel_config.as_ref(),
+            ) {
                 std::thread::sleep(std::time::Duration::from_millis(200));
                 send_keys(&new_id, &cmd)?;
             }

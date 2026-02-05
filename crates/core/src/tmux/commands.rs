@@ -5,6 +5,7 @@
 use std::process::{Command, Output};
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 
 /// Execute a tmux command and return the output
 fn tmux(args: &[&str]) -> Result<Output> {
@@ -57,7 +58,7 @@ pub fn has_session(name: &str) -> bool {
 }
 
 /// Information about a tmux session
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionInfo {
     /// Session name
     pub name: String,
@@ -71,6 +72,12 @@ pub struct SessionInfo {
     pub attached: bool,
     /// Working directory (from axel environment)
     pub working_dir: Option<String>,
+    /// Server port (from AXEL_PORT environment)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// Axel pane ID (from AXEL_PANE_ID environment)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub axel_pane_id: Option<String>,
 }
 
 /// Get the total number of panes in a session
@@ -116,6 +123,10 @@ pub fn list_sessions(axel_only: bool) -> Result<Vec<SessionInfo>> {
                     .map(|p| p.to_string_lossy().to_string())
             });
 
+            // Read port and pane_id from session environment
+            let port = get_environment(&name, "AXEL_PORT").and_then(|p| p.parse::<u16>().ok());
+            let axel_pane_id = get_environment(&name, "AXEL_PANE_ID");
+
             let panes = count_session_panes(&name);
 
             sessions.push(SessionInfo {
@@ -125,6 +136,8 @@ pub fn list_sessions(axel_only: bool) -> Result<Vec<SessionInfo>> {
                 created: parts[2].parse().unwrap_or(0),
                 attached: parts[3] == "1",
                 working_dir,
+                port,
+                axel_pane_id,
             });
         }
     }

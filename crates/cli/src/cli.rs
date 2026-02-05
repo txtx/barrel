@@ -287,6 +287,10 @@ pub enum SessionCommands {
         /// Show all tmux sessions, not just axel sessions
         #[arg(short, long)]
         all: bool,
+
+        /// Output in JSON format (for programmatic access)
+        #[arg(long)]
+        json: bool,
     },
 
     /// Create a new workspace session.

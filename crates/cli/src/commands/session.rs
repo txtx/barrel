@@ -14,9 +14,9 @@ use axel_core::{
     config::{expand_path, load_config},
     drivers, generate_hooks_settings, git, settings_path,
     tmux::{
-        AXEL_MANIFEST_ENV, NewSession, SetOption, attach_session,
-        create_workspace as tmux_create_workspace, detach_session, get_environment, has_session,
-        kill_session, list_sessions, set_environment,
+        AXEL_MANIFEST_ENV, AXEL_PANE_ID_ENV, AXEL_PORT_ENV, NewSession, OtelConfig, SetOption,
+        attach_session, create_workspace as tmux_create_workspace, detach_session, get_environment,
+        has_session, kill_session, list_sessions, set_environment,
     },
     write_settings,
 };
@@ -35,8 +35,15 @@ use crate::{
 ///
 /// If `axel_only` is true, only shows sessions created by axel
 /// (identified by the AXEL_MANIFEST environment variable).
-pub fn do_list_sessions(axel_only: bool) -> Result<()> {
+/// If `json_output` is true, outputs JSON format for programmatic access.
+pub fn do_list_sessions(axel_only: bool, json_output: bool) -> Result<()> {
     let sessions = list_sessions(axel_only)?;
+
+    if json_output {
+        let json = serde_json::to_string_pretty(&sessions)?;
+        println!("{}", json);
+        return Ok(());
+    }
 
     if sessions.is_empty() {
         if axel_only {
@@ -163,18 +170,30 @@ pub fn do_kill_workspace(
     worktree_branch: Option<&str>,
     skip_confirm: bool,
 ) -> Result<()> {
-    if !has_session(name) {
-        eprintln!("{} Session '{}' not found", "✘".red(), name);
-        eprintln!();
-        let _ = do_list_sessions(false);
-        return Ok(());
-    }
+    let resolved_name = if has_session(name) {
+        name.to_string()
+    } else {
+        let sessions = list_sessions(false).unwrap_or_default();
+        let matched = sessions
+            .iter()
+            .find(|session| session.axel_pane_id.as_deref() == Some(name))
+            .map(|session| session.name.clone());
+
+        if let Some(found) = matched {
+            found
+        } else {
+            eprintln!("{} Session '{}' not found", "✘".red(), name);
+            eprintln!();
+            let _ = do_list_sessions(false, false);
+            return Ok(());
+        }
+    };
 
     if !skip_confirm {
         use dialoguer::{Confirm, theme::ColorfulTheme};
         let theme = ColorfulTheme::default();
         let confirmed = Confirm::with_theme(&theme)
-            .with_prompt(format!("Kill session '{}'?", name))
+            .with_prompt(format!("Kill session '{}'?", resolved_name))
             .default(true)
             .interact()?;
 
@@ -187,8 +206,9 @@ pub fn do_kill_workspace(
     // Skip skill cleanup for worktree sessions - the worktree directory
     // may be pruned anyway, and we don't want to accidentally clean the main repo
     let cleaned = if !keep_skills && worktree_branch.is_none() {
-        let session_manifest = get_environment(name, AXEL_MANIFEST_ENV).map(PathBuf::from);
-        let config_path = workspaces_dir.join(name).join("AXEL.md");
+        let session_manifest =
+            get_environment(&resolved_name, AXEL_MANIFEST_ENV).map(PathBuf::from);
+        let config_path = workspaces_dir.join(&resolved_name).join("AXEL.md");
         let local_config = std::env::current_dir().ok().map(|d| d.join("AXEL.md"));
 
         let cfg = session_manifest
@@ -203,10 +223,15 @@ pub fn do_kill_workspace(
         Vec::new()
     };
 
-    detach_session(name)?;
-    kill_session(name)?;
+    detach_session(&resolved_name)?;
+    kill_session(&resolved_name)?;
 
-    println!("{} {} {}", "✔".green(), "Killed workspace".dimmed(), name);
+    println!(
+        "{} {} {}",
+        "✔".green(),
+        "Killed workspace".dimmed(),
+        resolved_name
+    );
 
     if !cleaned.is_empty() {
         println!(
@@ -321,7 +346,7 @@ pub fn launch_grid_by_name(
             }
 
             // Note: Codex/OpenCode OTEL is configured via CLI args at tmux pane creation time.
-            // For grids, this happens in tmux_create_workspace() which builds the command for each pane.
+            // The OtelConfig is passed to tmux_create_workspace() which adds the -c flags to Codex commands.
         }
     }
 
@@ -352,12 +377,18 @@ pub fn launch_grid_by_name(
         };
     }
 
+    // Create OTEL config if pane_id is provided (macOS app mode)
+    let otel_config = pane_id.map(|id| OtelConfig {
+        port,
+        pane_id: id.to_string(),
+    });
+
     match grid_type {
         GridType::Shell => launch_shell_mode(&config, Some(grid_name)),
         GridType::TmuxCC => {
-            launch_tmux_cc_mode_with_grid(config_path, &config, grid_name, &session)
+            launch_tmux_cc_mode_with_grid(config_path, &config, grid_name, &session, otel_config)
         }
-        GridType::Tmux => launch_tmux_mode_with_grid(&config, grid_name, &session),
+        GridType::Tmux => launch_tmux_mode_with_grid(&config, grid_name, &session, otel_config),
     }
 }
 
@@ -367,6 +398,7 @@ fn launch_tmux_cc_mode_with_grid(
     config: &axel_core::WorkspaceConfig,
     grid_name: &str,
     session_name: &str,
+    otel_config: Option<OtelConfig>,
 ) -> Result<()> {
     if has_session(session_name) {
         println!(
@@ -379,7 +411,7 @@ fn launch_tmux_cc_mode_with_grid(
         return Ok(());
     }
 
-    tmux_create_workspace(session_name, config, Some(grid_name))?;
+    tmux_create_workspace(session_name, config, Some(grid_name), otel_config)?;
 
     // Tag session with manifest path
     let manifest_str = config_path.to_string_lossy();
@@ -405,6 +437,7 @@ fn launch_tmux_mode_with_grid(
     config: &axel_core::WorkspaceConfig,
     grid_name: &str,
     session_name: &str,
+    otel_config: Option<OtelConfig>,
 ) -> Result<()> {
     if has_session(session_name) {
         println!(
@@ -415,7 +448,7 @@ fn launch_tmux_mode_with_grid(
         return Ok(());
     }
 
-    tmux_create_workspace(session_name, config, Some(grid_name))?;
+    tmux_create_workspace(session_name, config, Some(grid_name), otel_config)?;
 
     // Tag session with manifest path
     if let Some(ref manifest_path) = config.manifest_path {
@@ -791,6 +824,14 @@ pub fn launch_pane_by_name(
         let manifest_str = manifest_path.to_string_lossy();
         set_environment(&session, AXEL_MANIFEST_ENV, &manifest_str).ok();
 
+        // Store port and pane_id in session environment for recovery
+        if server_port.is_some() {
+            set_environment(&session, AXEL_PORT_ENV, &port.to_string()).ok();
+            if let Some(id) = pane_id {
+                set_environment(&session, AXEL_PANE_ID_ENV, id).ok();
+            }
+        }
+
         // Set up bell monitoring for Codex approval detection
         if let Some(driver) = drivers::get_driver(driver_name)
             && let Some(hook_cmd) = driver.tmux_bell_hook_command(port, &session)
@@ -958,7 +999,7 @@ fn launch_tmux_cc_mode(
         return Ok(());
     }
 
-    tmux_create_workspace(&session_name, config, profile)?;
+    tmux_create_workspace(&session_name, config, profile, None)?;
     println!(
         "{} {} {}",
         "✔".green(),
@@ -992,7 +1033,7 @@ fn launch_tmux_mode(config: &axel_core::WorkspaceConfig, profile: Option<&str>) 
         return Ok(());
     }
 
-    tmux_create_workspace(&session_name, config, profile)?;
+    tmux_create_workspace(&session_name, config, profile, None)?;
     println!(
         "{} {} {}",
         "✔".green(),

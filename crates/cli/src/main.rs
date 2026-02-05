@@ -127,7 +127,7 @@ fn main() -> Result<()> {
                 SkillCommands::Rm { name } => rm_skill(&name, &manifest_path, &base_dir),
             },
             Commands::Session { action } => match action {
-                SessionCommands::List { all } => do_list_sessions(!all),
+                SessionCommands::List { all, json } => do_list_sessions(!all, json),
                 SessionCommands::New {
                     pane,
                     grid,
@@ -215,7 +215,7 @@ fn main() -> Result<()> {
                     if !has_session(&name) {
                         eprintln!("{} Session '{}' not found", "✘".red(), name);
                         eprintln!();
-                        do_list_sessions(false)?;
+                        do_list_sessions(false, false)?;
                         std::process::exit(1);
                     }
                     attach_session(&name)
